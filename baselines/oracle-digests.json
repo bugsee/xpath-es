@@ -1,0 +1,111 @@
+{
+    "oracle": "xpath@0.0.36",
+    "limitMs": 300000,
+    "cases": {
+        "65k <a/> siblings": {
+            "digest": "6126b8424c7f",
+            "size": 65535,
+            "oracleMs": 30507
+        },
+        "cousins: 23k <a><b/></a>": {
+            "digest": "46b2720dd2ba",
+            "size": 47661,
+            "oracleMs": 7321
+        },
+        "one element, 30k attributes (xml-crypto ID lookup)": {
+            "digest": "4f53cda18c2b",
+            "size": 0,
+            "oracleMs": 6252
+        },
+        "one element, 30k attributes, all selected": {
+            "digest": "4576ce675046",
+            "size": 30000,
+            "oracleMs": 5881
+        },
+        "23k <a ID=\"y\"/>, all attributes": {
+            "digest": "93f476ff2436",
+            "size": 23830,
+            "oracleMs": 3565
+        },
+        "chain 9,000 deep": {
+            "digest": "f1fe5412d3f8",
+            "size": 9000,
+            "oracleMs": 6697
+        },
+        "chain 9,000 deep, ancestors of all": {
+            "digest": "fc5e37e21096",
+            "size": 8999,
+            "oracleMs": 43908
+        },
+        "8k siblings, nearest preceding sibling": {
+            "digest": null,
+            "size": null,
+            "oracleMs": null
+        },
+        "8k siblings, all following siblings": {
+            "digest": "aa7355a7696b",
+            "size": 8189,
+            "oracleMs": 57168
+        },
+        "8k siblings, count(preceding-sibling)": {
+            "digest": "fe94b827f045",
+            "size": 1,
+            "oracleMs": 28496
+        },
+        "65k siblings, count(preceding-sibling)": {
+            "digest": null,
+            "size": null,
+            "oracleMs": null
+        },
+        "8k siblings, position() = last()": {
+            "digest": "59bbbe79aad8",
+            "size": 1,
+            "oracleMs": 370
+        },
+        "union of 3 sets, 14k each": {
+            "digest": "e2f2a6af885f",
+            "size": 43689,
+            "oracleMs": 12623
+        },
+        "union elements + attributes": {
+            "digest": "e2c79b57a52e",
+            "size": 58253,
+            "oracleMs": 17332
+        },
+        "union of the same 65k set twice": {
+            "digest": "f903d3cacefd",
+            "size": 65534,
+            "oracleMs": 34627
+        },
+        "8k siblings, following of all": {
+            "digest": "aa7355a7696b",
+            "size": 8189,
+            "oracleMs": 60862
+        },
+        "8k siblings, preceding of all": {
+            "digest": "462dec17208a",
+            "size": 8190,
+            "oracleMs": 39426
+        },
+        "6k elements, each its own namespace": {
+            "digest": "568f15e9fe7b",
+            "size": 1,
+            "oracleMs": 207
+        },
+        "root with 3,000 namespace declarations, 20k children": {
+            "digest": "c9f3f0438221",
+            "size": 23000,
+            "oracleMs": 2875
+        },
+        "samlify assertion-signature path, 7k <Assertion><Signature/></Assertion>": {
+            "digest": "fe8416a6c5c2",
+            "size": 7489,
+            "oracleMs": 652
+        },
+        "samlify wrapping check, 9k nested <Assertion/> in SubjectConfirmationData": {
+            "digest": "d5f17a7c963a",
+            "size": 14970,
+            "oracleMs": 1008
+        }
+    }
+}
