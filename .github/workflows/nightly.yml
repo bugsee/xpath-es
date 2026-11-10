@@ -1,0 +1,49 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dom: [xmldom08, xmldom09, xmldom06, jsdom, happy, linkedom]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # The seed changes every day, so that the nightly runs cover new documents; it is printed for reproduction.
+      - name: Random documents, all scenarios, whole corpus
+        run: |
+          seed="$(date +%Y%m%d)"
+          echo "seed $seed"
+          node test/fuzz.ts ${{ matrix.dom }} 2000 "$seed" all
+      - name: Random expressions
+        run: |
+          seed="$(date +%Y%m%d)"
+          node test/fuzz-expr.ts ${{ matrix.dom }} 300 100 "$seed" ns 5000
+
+  hostile-and-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node test/mutation.ts
+      - run: npm run test:hostile
+      - run: npm run fixtures
+      - name: samlify and xml-crypto with the candidate in shadow mode
+        run: node bench/e2e.ts 20
