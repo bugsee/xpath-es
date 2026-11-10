@@ -1,0 +1,202 @@
+// Differential fuzzer in TypeScript: upstream xpath 0.0.36 against the prototype's compat entry.
+// Same document generator, queries and scenarios as forks/review/fuzz2.js (static, mutated, detached, fragment, two
+// documents, pair ordering through XNodeSet), plus the consumer corpus, and every difference is classified.
+//
+//   node test/fuzz.ts <dom> <documents> [seed] [corpus: fuzz|all]
+
+import { XPathProgram } from '../src/program.ts';
+import * as candidate from '../src/compat.ts';
+import type { DomNode } from '../src/dom.ts';
+import { CORPUS, FUZZ_QUERIES } from './corpus.ts';
+import { documentText } from './generate.ts';
+import { allNodes, call, describe, errorText, isDomName, loadDom, loadXPath, makeRandom, UPSTREAM_PATH } from './harness.ts';
+
+XPathProgram.forceSlowPath = process.env['SLOW'] === '1';
+const domName = process.argv[2] ?? 'xmldom08';
+if (!isDomName(domName)) throw new Error(`unknown DOM ${domName}`);
+const documents = Number(process.argv[3] ?? 200);
+const random = makeRandom(Number(process.argv[4] ?? 12345));
+const queries = process.argv[5] === 'all' ? CORPUS : FUZZ_QUERIES;
+const parse = loadDom(domName);
+const upstream = loadXPath(UPSTREAM_PATH);
+
+function pick<T>(items: readonly T[]): T | undefined {
+    return items[Math.floor(random() * items.length)];
+}
+
+type Scenario = 'static' | 'mutated' | 'detached' | 'fragment' | 'twodocs' | 'pairs' | 'pairs-two-trees';
+type Kind = 'equal' | 'message' | 'order' | 'mixed' | 'result';
+const tally = new Map<string, number>();
+const samples = new Map<string, string>();
+let upstreamThrows = 0;
+
+function indexOf(roots: readonly DomNode[]): Map<unknown, number> {
+    const index = new Map<unknown, number>();
+    for (const root of roots) for (const node of allNodes(root)) index.set(node, index.size);
+    return index;
+}
+
+function attempt(run: () => unknown, index: ReadonlyMap<unknown, number>): string {
+    try {
+        return describe(run(), index);
+    } catch (error) {
+        return `ERR ${errorText(error)}`;
+    }
+}
+
+const members = (text: string): string[] => (text.startsWith('[') ? text.slice(1, -1).split(',').sort() : [text]);
+
+function record(scenario: Scenario, what: string, expected: string, actual: string, special: (text: string) => boolean): void {
+    let kind: Kind = 'result';
+    const a = expected.startsWith('ERR');
+    const b = actual.startsWith('ERR');
+    if (a) upstreamThrows++;
+    if (expected === actual) kind = 'equal';
+    else if (a && b) kind = 'message';
+    else if (!a && !b && members(expected).join() === members(actual).join()) kind = 'order';
+    else if (special(expected) || special(actual)) kind = 'mixed';
+    const key = `${scenario}/${kind}`;
+    tally.set(key, (tally.get(key) ?? 0) + 1);
+    if (kind !== 'equal' && !samples.has(key)) samples.set(key, `${what}\n     upstream:  ${expected.slice(0, 140)}\n     candidate: ${actual.slice(0, 140)}`);
+}
+
+function specialTest(index: ReadonlyMap<unknown, number>, nodes: readonly DomNode[]): (text: string) => boolean {
+    const attributeIds = new Set<string>();
+    for (const node of nodes) if (node.nodeType === 2) attributeIds.add(String(index.get(node)));
+    return (text) => text.includes('ns:') || text.includes('UNKNOWN') || members(text).some((item) => attributeIds.has(item));
+}
+
+function compareQueries(scenario: Scenario, contexts: readonly (DomNode | undefined)[], index: ReadonlyMap<unknown, number>, nodes: readonly DomNode[]): void {
+    const special = specialTest(index, nodes);
+    for (const query of queries) {
+        for (const node of contexts) {
+            if (node === undefined) continue;
+            const expected = attempt(() => upstream.select(query, node), index);
+            const actual = attempt(() => candidate.select(query, node), index);
+            record(scenario, query, expected, actual, (text) => special(text) || node.nodeType === 2);
+        }
+    }
+}
+
+function comparePairs(scenario: Scenario, nodes: readonly DomNode[], index: ReadonlyMap<unknown, number>): void {
+    const special = specialTest(index, nodes);
+    for (let t = 0; t < 60; t++) {
+        const a = pick(nodes);
+        const b = pick(nodes);
+        if (a === undefined || b === undefined) continue;
+        const expected = attempt(() => upstream.orderPair(a, b), index);
+        const actual = attempt(() => {
+            const set = new candidate.XNodeSet();
+            set.add(a);
+            set.add(b);
+            return set.toArray();
+        }, index);
+        record(scenario, `pair ${a.nodeName}/${a.nodeType} ${b.nodeName}/${b.nodeType}`, expected, actual, special);
+    }
+}
+
+/** One random structural change; returns the subtree it removed, if it removed one. */
+function mutate(doc: DomNode): DomNode | null {
+    const root = doc.documentElement;
+    const elements = allNodes(doc).filter((node) => node.nodeType === 1 && node !== root);
+    const target = pick(elements);
+    if (target === undefined) return null;
+    const r = random();
+    const parent = target.parentNode;
+    try {
+        if (r < 0.3) {
+            call(parent, 'removeChild', target);
+            return target;
+        }
+        if (r < 0.6) {
+            if (parent != null && parent.firstChild !== target) call(parent, 'insertBefore', target, parent.firstChild);
+            return null;
+        }
+        if (r < 0.8) {
+            const to = pick(elements);
+            for (let up: DomNode | null | undefined = to; up != null; up = up.parentNode) if (up === target) return null;
+            call(to, 'appendChild', target);
+            return null;
+        }
+        call(parent, 'insertBefore', call(doc, 'createElement', 'new'), target);
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+const started = Date.now();
+let done = 0;
+let previous: DomNode | null = null;
+for (let d = 0; d < documents; d++) {
+    const xml = documentText(random);
+    let doc: DomNode;
+    try {
+        doc = parse(xml);
+    } catch {
+        continue;
+    }
+    if (doc.documentElement == null) continue;
+    let nodes = allNodes(doc);
+    let index = indexOf([doc]);
+    compareQueries('static', [doc, pick(nodes.filter((node) => node.nodeType !== 2)), pick(nodes)], index, nodes);
+    comparePairs('pairs', nodes, index);
+    if (previous !== null) {
+        const both = indexOf([doc, previous]);
+        const all = nodes.concat(allNodes(previous));
+        comparePairs('pairs-two-trees', all, both);
+        const variables = { a: pick(nodes), b: pick(allNodes(previous)), c: pick(nodes) };
+        const expression = '$a | $b | $c | //a | $b/..';
+        const expected = attempt(() => upstream.parseSelect(expression, { node: doc, variables }), both);
+        const actual = attempt(() => candidate.parse(expression).select({ node: doc, variables }), both);
+        record('twodocs', expression, expected, actual, specialTest(both, all));
+    }
+    for (let round = 0; round < 3; round++) {
+        const removed = mutate(doc);
+        index = indexOf(removed === null ? [doc] : [doc, removed]);
+        nodes = allNodes(doc);
+        compareQueries('mutated', [doc, pick(nodes)], index, nodes);
+        if (removed !== null) {
+            const detached = allNodes(removed);
+            compareQueries('detached', [removed], index, nodes.concat(detached));
+            comparePairs('pairs-two-trees', nodes.concat(detached), index);
+        }
+    }
+    if (d % 3 === 0) {
+        let fragment: unknown;
+        try {
+            fragment = call(doc, 'createDocumentFragment');
+        } catch {
+            fragment = null;
+        }
+        if (candidate.isNodeLike(fragment)) {
+            const root = doc.documentElement;
+            for (let child = root.firstChild; child != null; child = root.firstChild) {
+                try {
+                    call(fragment, 'appendChild', child);
+                } catch {
+                    call(root, 'removeChild', child);
+                }
+            }
+            index = indexOf([doc, fragment]);
+            const inFragment = allNodes(fragment);
+            compareQueries('fragment', [fragment, pick(inFragment)], index, inFragment.concat(allNodes(doc)));
+            comparePairs('pairs-two-trees', inFragment.concat(allNodes(doc)), index);
+        }
+    }
+    previous = doc;
+    done++;
+}
+
+const SCENARIOS: readonly Scenario[] = ['static', 'mutated', 'detached', 'fragment', 'twodocs', 'pairs', 'pairs-two-trees'];
+const KINDS: readonly Kind[] = ['equal', 'result', 'mixed', 'order', 'message'];
+console.log(`${domName}: ${done} documents, ${queries.length} queries, ${Date.now() - started} ms; upstream threw in ${upstreamThrows} comparisons`);
+console.log(`| scenario | ${KINDS.join(' | ')} |`);
+console.log(`|---|${KINDS.map(() => '---:').join('|')}|`);
+let failures = 0;
+for (const scenario of SCENARIOS) {
+    console.log(`| ${scenario} | ${KINDS.map((kind) => tally.get(`${scenario}/${kind}`) ?? 0).join(' | ')} |`);
+    failures += tally.get(`${scenario}/result`) ?? 0;
+}
+if (process.env['SAMPLES'] !== undefined) for (const [key, sample] of samples) console.log(`  ${key}: ${sample}`);
+process.exitCode = failures === 0 ? 0 : 1;

@@ -1,0 +1,6 @@
+{
+    "name": "xpath-es-prototype",
+    "private": true,
+    "type": "module",
+    "description": "Hot-path prototype for xpath-es. Runs straight from the .ts sources (Node >= 22.18, type stripping); not a publishable build."
+}
