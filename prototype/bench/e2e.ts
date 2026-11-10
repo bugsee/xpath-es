@@ -15,7 +15,7 @@ import { call, errorText, UPSTREAM_PATH } from '../test/harness.ts';
 import { readFixtures } from './saml-fixtures.ts';
 
 const require = createRequire(import.meta.url);
-const APP = '/Volumes/External2TB/Projects/Bugsee/appserver/node_modules/';
+const APP = '/path/to/consumer-app/node_modules/';
 const MODES = ['upstream', 'fork', 'xpath-es', 'shadow'] as const;
 type Mode = (typeof MODES)[number];
 

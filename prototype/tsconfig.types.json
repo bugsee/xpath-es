@@ -11,7 +11,7 @@
             "node"
         ],
         "typeRoots": [
-            "/Volumes/External2TB/Projects/Bugsee/appserver/node_modules/@types"
+            "/path/to/consumer-app/node_modules/@types"
         ],
         "noEmit": true,
         "strict": true,

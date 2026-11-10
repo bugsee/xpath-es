@@ -1,4 +1,4 @@
-// Builds the legitimate SAML documents the benchmarks use, the way scratchpad/research/common.js does: a signed
+// Builds the legitimate SAML documents the benchmarks use, the way a research script does: a signed
 // login response from samlify's own IdP, once small (2 attributes, about 4 KiB) and once with 1,000 group values
 // (about 83 KiB). Written to results/ so that every engine is measured on the same bytes.
 //

@@ -13,7 +13,7 @@ export const SCRATCH: string = path.resolve(import.meta.dirname, '../../..');
 export const UPSTREAM_PATH: string = path.join(SCRATCH, 'forks/xpath.upstream.js');
 export const FORK_PATH: string = path.join(SCRATCH, 'forks/xpath-up/xpath.js');
 const DOMS = path.join(SCRATCH, 'forks/review/doms/node_modules');
-const APP_XMLDOM = '/Volumes/External2TB/Projects/Bugsee/appserver/node_modules/@xmldom/xmldom';
+const APP_XMLDOM = '/path/to/consumer-app/node_modules/@xmldom/xmldom';
 
 type Constructor = new (...args: unknown[]) => unknown;
 

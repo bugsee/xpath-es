@@ -1,8 +1,8 @@
 #!/bin/sh
-# Type-check and lint the prototype with the appserver's toolchain (TypeScript 7, oxlint type-aware).
+# Type-check and lint the prototype with a host project's toolchain (TypeScript 7, oxlint type-aware).
 set -e
 cd "$(dirname "$0")"
-A=/Volumes/External2TB/Projects/Bugsee/appserver
+A=/path/to/consumer-app
 node "$A/node_modules/typescript-7/bin/tsc" --noEmit -p tsconfig.json
 echo "tsc: 0 errors"
 node "$A/node_modules/typescript-7/bin/tsc" --noEmit -p tsconfig.types.json
