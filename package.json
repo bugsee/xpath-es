@@ -1,0 +1,79 @@
+{
+    "name": "xpath-es",
+    "version": "0.0.0",
+    "private": true,
+    "description": "A modern TypeScript XPath 1.0 engine, in progress. This repository currently holds the test gate: a differential harness and a hostile-document suite that can judge any candidate xpath engine against upstream xpath 0.0.36.",
+    "type": "module",
+    "license": "MIT",
+    "author": {
+        "name": "Bugsee"
+    },
+    "contributors": [
+        {
+            "name": "Cameron McCormack",
+            "url": "https://github.com/goto100/xpath#xpath"
+        },
+        {
+            "name": "Yaron Naveh"
+        },
+        {
+            "name": "goto100",
+            "url": "https://github.com/goto100"
+        },
+        {
+            "name": "Thomas Weinert"
+        },
+        {
+            "name": "Jimmy Rishe"
+        }
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/bugsee/xpath-es.git"
+    },
+    "bugs": {
+        "url": "https://github.com/bugsee/xpath-es/issues"
+    },
+    "homepage": "https://github.com/bugsee/xpath-es#readme",
+    "engines": {
+        "node": ">=22.18"
+    },
+    "scripts": {
+        "typecheck": "node node_modules/typescript-7/bin/tsc --noEmit -p tsconfig.json",
+        "lint": "oxlint --type-aware --tsconfig tsconfig.json -c .oxlintrc.json test bench",
+        "format": "oxfmt --write \"{test,bench}/**/*.ts\"",
+        "format:check": "oxfmt --check \"{test,bench}/**/*.ts\"",
+        "check": "npm run typecheck && npm run lint && npm run format:check",
+        "fixtures": "node bench/saml-fixtures.ts",
+        "test:self": "CANDIDATE=xpath node test/fuzz.ts xmldom08 150 7 all && CANDIDATE=xpath node test/mutation.ts",
+        "test:differential": "node test/fuzz.ts xmldom08 300 11 all && node test/mutation.ts && node test/fuzz-expr.ts xmldom08 40 60 5",
+        "test:hostile": "node test/hostile.ts",
+        "test:harness": "node test/harness-selftest.ts",
+        "test": "npm run test:harness && npm run test:differential && npm run test:hostile",
+        "bench:hostile": "node bench/hostile.ts",
+        "bench:consumers": "node bench/consumers.ts",
+        "bench:e2e": "node bench/e2e.ts"
+    },
+    "devDependencies": {
+        "@authenio/xml-encryption": "2.0.2",
+        "@types/node": "24.19.2",
+        "@xmldom/xmldom": "0.8.15",
+        "happy-dom": "21.0.4",
+        "jsdom": "31.0.0",
+        "linkedom": "0.18.15",
+        "node-forge": "1.4.0",
+        "oxfmt": "0.75.0",
+        "oxlint": "1.90.0",
+        "oxlint-tsgolint": "7.0.2005",
+        "samlify": "2.13.1",
+        "typescript-7": "npm:typescript@7.0.2",
+        "xml-crypto": "6.4.0",
+        "xmldom06": "npm:xmldom@0.6.0",
+        "xmldom09": "npm:@xmldom/xmldom@0.9.12",
+        "xpath": "0.0.36",
+        "xpath-fork": "https://github.com/bugsee/xpath/releases/download/v0.0.36-bugsee.3/xpath-0.0.36-bugsee.3.tgz"
+    },
+    "overrides": {
+        "xpath": "$xpath"
+    }
+}

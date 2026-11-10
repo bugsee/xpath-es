@@ -1,0 +1,14 @@
+node_modules/
+results/
+coverage/
+*.tgz
+
+# Design and decision documents are kept out of the repository.
+DESIGN.md
+TEST-PLAN.md
+ROADMAP.md
+RESULTS.md
+DECISIONS.md
+docs/design/
+docs/decisions/
+.design/
