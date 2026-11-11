@@ -4,9 +4,12 @@
 
 import { parentPort } from 'node:worker_threads';
 import { allNodes, describe, errorText, isDomName, loadCandidate, loadDom, loadOracle } from './harness.ts';
+import { isNamespaceDuplicate } from './support/classify.ts';
 import type { DomNode } from './support/dom.ts';
+import { loadInternedOracle } from './support/interned-oracle.ts';
 
-export type Kind = 'equal' | 'message' | 'order' | 'mixed' | 'result';
+/** `documented`: a difference in a documented class (CLASSIFY, see the README); it does not fail the run. */
+export type Kind = 'equal' | 'message' | 'order' | 'mixed' | 'result' | 'documented';
 
 export interface Job {
     readonly dom: string;
@@ -48,6 +51,8 @@ const members = (text: string): string[] => (text.startsWith('[') ? text.slice(1
 function run(job: Job, send: (report: Report) => void): void {
     if (!isDomName(job.dom)) throw new Error(`unknown DOM ${job.dom}`);
     const upstream = loadOracle();
+    const interned = loadInternedOracle();
+    const classify = process.env['CLASSIFY'] ?? '';
     const candidate = loadCandidate();
     const doc = loadDom(job.dom)(job.xml);
     const nodes = allNodes(doc);
@@ -87,8 +92,17 @@ function run(job: Job, send: (report: Report) => void): void {
             else if (a && b) kind = 'message';
             else if (!a && !b && members(expected).join() === members(got).join()) kind = 'order';
             else if (special(expected) || special(got) || node.nodeType === 2) kind = 'mixed';
+            if (classify !== '' && (kind === 'result' || kind === 'mixed' || kind === 'order')) {
+                // Class 5 (both DOMs that gate) and, for xmldom 0.9 (CLASSIFY=all), class 1: upstream throws on a
+                // namespace node and the engine answers.
+                const namespaceDuplicate = isNamespaceDuplicate(expression, expected, got, () =>
+                    attempt(() => interned.select(expression, node))
+                );
+                const namespaceCrash = classify === 'all' && a && !b && expression.includes('namespace::');
+                if (namespaceDuplicate || namespaceCrash) kind = 'documented';
+            }
             kinds.push(kind);
-            if (kind !== 'equal' && kind !== 'message' && sample === null) {
+            if (kind !== 'equal' && kind !== 'message' && kind !== 'documented' && sample === null) {
                 sample = `${kind} @${node.nodeName}/${node.nodeType}\n     upstream:  ${expected.slice(0, 150)}\n     candidate: ${got.slice(0, 150)}`;
             }
         });

@@ -7,6 +7,8 @@
 //
 //   node test/fuzz-expr.ts <dom> <documents> <expressions per document> [seed] [ns] [limit ms]
 //   TOLERATE=order,mixed lets those kinds of difference through, for a DOM known to differ
+//   CLASSIFY=all|ns-duplicate  the split gate: differences in the documented classes (see test/fuzz.ts) are counted
+//   apart and do not fail the run; every other difference does
 
 import { Worker } from 'node:worker_threads';
 import { isReport } from './fuzz-expr-worker.ts';
@@ -22,7 +24,7 @@ const random = makeRandom(Number(process.argv[5] ?? 4242));
 const nextExpression = makeExpressionGenerator(random, { namespaceAxis: process.argv[6] === 'ns' });
 const limit = Number(process.argv[7] ?? 5000);
 
-const tally: Record<Kind, number> = { equal: 0, message: 0, order: 0, mixed: 0, result: 0 };
+const tally: Record<Kind, number> = { equal: 0, message: 0, order: 0, mixed: 0, result: 0, documented: 0 };
 const shapes = { 'node-set': 0, scalar: 0, error: 0 };
 const samples = new Map<string, string>();
 const slow = { upstream: 0, candidate: 0 };
@@ -95,7 +97,7 @@ console.log(
 );
 console.log(`upstream gave ${shapes['node-set']} node-sets, ${shapes.scalar} scalars, ${shapes.error} errors`);
 console.log(
-    `equal ${tally.equal}; differences: result ${tally.result}, mixed-kind sets ${tally.mixed}, order-only ${tally.order}, error-message-only ${tally.message}`
+    `equal ${tally.equal}; differences: result ${tally.result}, mixed-kind sets ${tally.mixed}, order-only ${tally.order}, error-message-only ${tally.message}, documented classes ${tally.documented}`
 );
 for (const sample of slowSamples) console.log(`  slow ${sample.slice(0, 200)}`);
 for (const [expression, sample] of samples) console.log(`  ${expression}\n     ${sample}`);

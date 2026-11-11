@@ -65,13 +65,14 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      # Gated: xmldom 0.8 (what the SAML libraries use) with zero differences, and xmldom 0.9 with the split gate
-      # (CLASSIFY: no difference where both engines answer; the rest must fall in the documented classes). The other
-      # DOMs are compared in the nightly run and do not gate; see the README.
-      - run: node test/fuzz.ts xmldom08 300 31 all
-      - run: CLASSIFY=1 node test/fuzz.ts xmldom09 300 31 all
-      - run: CANDIDATE=./test/support/candidate-slow.ts node test/fuzz.ts xmldom08 150 32 all
+      # Gated: xmldom 0.8 (what the SAML libraries use): equal to upstream except for class 5 (CLASSIFY=ns-duplicate,
+      # see the README); xmldom 0.9: the split gate (CLASSIFY=all: no difference where both engines answer, apart from
+      # class 5, and the rest must fall in the documented classes). The other DOMs are compared in the nightly run and
+      # do not gate.
+      - run: CLASSIFY=ns-duplicate node test/fuzz.ts xmldom08 300 31 all
+      - run: CLASSIFY=all node test/fuzz.ts xmldom09 300 31 all
+      - run: CLASSIFY=ns-duplicate CANDIDATE=./test/support/candidate-slow.ts node test/fuzz.ts xmldom08 150 32 all
       - run: node test/mutation.ts
-      - run: node test/fuzz-expr.ts xmldom08 60 100 31 ns 5000
-      - run: node test/fuzz-expr.ts xmldom09 60 100 31 ns 5000
+      - run: CLASSIFY=ns-duplicate node test/fuzz-expr.ts xmldom08 60 100 31 ns 5000
+      - run: CLASSIFY=all node test/fuzz-expr.ts xmldom09 60 100 31 ns 5000
       - run: HOSTILE_STRICT=1 node test/hostile.ts

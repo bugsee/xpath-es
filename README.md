@@ -28,8 +28,8 @@ This repository holds four things:
 
 | DOM | Status | Gate |
 |---|---|---|
-| `@xmldom/xmldom` 0.8 (what the SAML libraries use) | **gated** | zero differences from upstream, in every scenario and for random expressions |
-| `@xmldom/xmldom` 0.9 | **gated, split** | `CLASSIFY=1`: no difference where upstream answers and the engine answers; every other difference must fall in a documented class, and an unclassified difference fails |
+| `@xmldom/xmldom` 0.8 (what the SAML libraries use) | **gated** | zero differences from upstream, in every scenario and for random expressions, except class 5 below (`CLASSIFY=ns-duplicate`) |
+| `@xmldom/xmldom` 0.9 | **gated, split** | `CLASSIFY=all`: no difference where upstream answers and the engine answers, except class 5; every other difference must fall in a documented class, and an unclassified difference fails |
 | xmldom 0.6, jsdom, happy-dom, linkedom | compared, **not gating** | the nightly run reports the differences; it fails only on a crash |
 
 The documented classes (xmldom 0.9):
@@ -40,6 +40,14 @@ The documented classes (xmldom 0.9):
   nodes. The engine numbers the tree itself and answers.
 - **a node-set spanning several trees**: upstream returns an arbitrary order; the engine throws `XPathOrderError`
   (a safe failure).
+- **class 5, the namespace axis over duplicate contexts** (xmldom 0.8 and 0.9): upstream makes a new namespace-node
+  object on every evaluation, so a context reached twice yields the same namespace node twice, and its node-set (or a
+  `count()` of it) holds duplicates; the engine, which removes duplicates between steps, returns it once. A node-set
+  holds each node once, so the engine is right by the Recommendation. The check is rigorous: the expression must
+  contain `namespace::`, both engines must answer, and the engine's answer must equal that of upstream with its
+  namespace nodes interned per (element, prefix) (`test/support/interned-oracle.ts`, upstream's own source with two
+  creation sites changed), for node-sets and for scalars alike. No consumer (samlify, xml-crypto, xml-encryption)
+  uses the namespace axis.
 
 Why the other DOMs do not gate: upstream delegates ordering to the DOM there and inherits its defects (linkedom's
 `compareDocumentPosition` is not a document order, happy-dom and jsdom misorder or drop attributes), and xmldom 0.6
@@ -88,7 +96,7 @@ CANDIDATE=xpath node test/mutation.ts        # the oracle against itself: must s
 
 | script | what it does |
 |---|---|
-| `test/fuzz.ts <dom> <documents> [seed] [fuzz\|all]` | random documents and the scenarios static, mutated, detached, fragment, two documents, pair ordering; `all` adds the whole corpus. Fails on any difference in members, order or attribute/namespace nodes (`TOLERATE=order,mixed` lets kinds through; `CLASSIFY=1` is the split gate for xmldom 0.9, above) |
+| `test/fuzz.ts <dom> <documents> [seed] [fuzz\|all]` | random documents and the scenarios static, mutated, detached, fragment, two documents, pair ordering; `all` adds the whole corpus. Fails on any difference in members, order or attribute/namespace nodes (`TOLERATE=order,mixed` lets kinds through; `CLASSIFY=all` is the split gate for xmldom 0.9 and `CLASSIFY=ns-duplicate` allows class 5 only, above) |
 | `test/fuzz-expr.ts <dom> <documents> <expressions> [seed] [ns] [limit ms]` | random expressions from a grammar on random documents; an evaluation that does not return in time is counted, with the engine that was running |
 | `test/mutation.ts` | the document changes while a result is held, or while an expression is being evaluated by a custom function |
 | `test/hostile.ts` | the hostile gate, below |

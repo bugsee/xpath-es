@@ -17,12 +17,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # xmldom 0.8: zero differences.
-          - { dom: xmldom08, candidate: ./src/index.ts, classify: '' }
-          - { dom: xmldom08, candidate: ./test/support/candidate-slow.ts, classify: '' }
-          # xmldom 0.9: the split gate.
-          - { dom: xmldom09, candidate: ./src/index.ts, classify: '1' }
-          - { dom: xmldom09, candidate: ./test/support/candidate-slow.ts, classify: '1' }
+          # xmldom 0.8: equal to upstream except for class 5 (the namespace axis over duplicate contexts).
+          - { dom: xmldom08, candidate: ./src/index.ts, classify: ns-duplicate }
+          - { dom: xmldom08, candidate: ./test/support/candidate-slow.ts, classify: ns-duplicate }
+          # xmldom 0.9: the split gate (all documented classes).
+          - { dom: xmldom09, candidate: ./src/index.ts, classify: all }
+          - { dom: xmldom09, candidate: ./test/support/candidate-slow.ts, classify: all }
     env:
       CANDIDATE: ${{ matrix.candidate }}
       CLASSIFY: ${{ matrix.classify }}
@@ -37,7 +37,6 @@ jobs:
         run: |
           seed="$(date +%Y%m%d)"
           echo "seed $seed"
-          if [ -z "$CLASSIFY" ]; then unset CLASSIFY; fi
           node test/fuzz.ts ${{ matrix.dom }} 4000 "$seed" all
       - name: Random expressions
         run: |

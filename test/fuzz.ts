@@ -7,8 +7,9 @@
 //
 //   node test/fuzz.ts <dom> <documents> [seed] [corpus: fuzz|all]
 //   SAMPLES=1 node test/fuzz.ts ...        print one example of each kind of difference
-//   CLASSIFY=1 node test/fuzz.ts ...       the split gate (xmldom 0.9): a difference is allowed only when it falls in
+//   CLASSIFY=all node test/fuzz.ts ...     the split gate (xmldom 0.9): a difference is allowed only when it falls in
 //                                          one of the documented classes below; anything else fails the run
+//   CLASSIFY=ns-duplicate node ...         the same with class 5 only (xmldom 0.8: everything else must be equal)
 //   TOLERATE=order node test/fuzz.ts ...   do not fail on the listed kinds
 
 import { CORPUS, FUZZ_QUERIES } from './corpus.ts';
@@ -25,7 +26,9 @@ import {
     loadOracle,
     makeRandom
 } from './harness.ts';
+import { isNamespaceDuplicate } from './support/classify.ts';
 import { isDomNode } from './support/dom.ts';
+import { loadInternedOracle } from './support/interned-oracle.ts';
 import type { DomNode } from './support/dom.ts';
 
 const domName = process.argv[2] ?? 'xmldom08';
@@ -35,6 +38,7 @@ const random = makeRandom(Number(process.argv[4] ?? 12345));
 const queries = process.argv[5] === 'all' ? CORPUS : FUZZ_QUERIES;
 const parse = loadDom(domName);
 const upstream = loadOracle();
+const interned = loadInternedOracle();
 const candidate = loadCandidate();
 
 function pick<T>(items: readonly T[]): T | undefined {
@@ -47,7 +51,6 @@ const tally = new Map<string, number>();
 const samples = new Map<string, string>();
 const classes = new Map<string, number>();
 const unclassified: string[] = [];
-const classifyMode = (process.env['CLASSIFY'] ?? '') !== '';
 let upstreamThrows = 0;
 
 function indexOf(roots: readonly DomNode[]): Map<unknown, number> {
@@ -74,14 +77,43 @@ const DOCUMENTED = [
     'namespace-nodes: upstream throws, engine answers',
     'detached-context: upstream throws, engine answers',
     'two-trees: engine throws XPathOrderError, upstream answers',
-    'two-trees: upstream throws, engine answers'
+    'two-trees: upstream throws, engine answers',
+    'namespace-axis: upstream repeats a namespace node for a duplicate context'
 ] as const;
 const ORDER_ERROR = 'ERR Unexpected: could not determine node order';
+const NAMESPACE_DUPLICATE = DOCUMENTED[4];
 
-function classify(scenario: Scenario, what: string, expected: string, actual: string): string | null {
+/** CLASSIFY=all allows every class; CLASSIFY=ns-duplicate only the last (class 5), for the DOMs that must otherwise be equal. */
+const classifyValue = process.env['CLASSIFY'] ?? '';
+const classifyMode = classifyValue !== '';
+const allowed: ReadonlySet<string> =
+    classifyValue === 'ns-duplicate' ? new Set<string>([NAMESPACE_DUPLICATE]) : new Set<string>(DOCUMENTED);
+
+function classify(
+    scenario: Scenario,
+    what: string,
+    expected: string,
+    actual: string,
+    interned: (() => string) | undefined
+): string | null {
+    const found = classifyAll(scenario, what, expected, actual, interned);
+    return found !== null && allowed.has(found) ? found : null;
+}
+
+function classifyAll(
+    scenario: Scenario,
+    what: string,
+    expected: string,
+    actual: string,
+    interned: (() => string) | undefined
+): string | null {
     const upstreamThrows = expected.startsWith('ERR');
     const engineThrows = actual.startsWith('ERR');
-    if (upstreamThrows === engineThrows) return null;
+    if (upstreamThrows === engineThrows) {
+        return interned !== undefined && isNamespaceDuplicate(what, expected, actual, interned)
+            ? NAMESPACE_DUPLICATE
+            : null;
+    }
     const twoTrees = scenario === 'twodocs' || scenario === 'pairs-two-trees';
     if (twoTrees) return engineThrows && actual === ORDER_ERROR ? DOCUMENTED[2] : upstreamThrows ? DOCUMENTED[3] : null;
     if (!upstreamThrows) return null;
@@ -96,7 +128,8 @@ function record(
     what: string,
     expected: string,
     actual: string,
-    special: (text: string) => boolean
+    special: (text: string) => boolean,
+    interned?: () => string
 ): void {
     let kind: Kind = 'result';
     const a = expected.startsWith('ERR');
@@ -108,7 +141,7 @@ function record(
     else if (special(expected) || special(actual)) kind = 'mixed';
     const key = `${scenario}/${kind}`;
     if (kind === 'result' || kind === 'mixed' || kind === 'order') {
-        const cls = classify(scenario, what, expected, actual);
+        const cls = classify(scenario, what, expected, actual, interned);
         const slot = cls ?? 'UNCLASSIFIED';
         classes.set(slot, (classes.get(slot) ?? 0) + 1);
         if (cls === null && unclassified.length < 8)
@@ -140,7 +173,14 @@ function compareQueries(
             if (node === undefined) continue;
             const expected = attempt(() => upstream.select(query, node), index);
             const actual = attempt(() => candidate.select(query, node), index);
-            record(scenario, query, expected, actual, (text) => special(text) || node.nodeType === 2);
+            record(
+                scenario,
+                query,
+                expected,
+                actual,
+                (text) => special(text) || node.nodeType === 2,
+                () => attempt(() => interned.select(query, node), index)
+            );
         }
     }
 }
