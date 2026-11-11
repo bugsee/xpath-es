@@ -44,15 +44,14 @@ jobs:
           node test/fuzz-expr.ts ${{ matrix.dom }} 300 100 "$seed" ns 5000
 
   # The other DOMs do not gate: upstream delegates ordering to their compareDocumentPosition and inherits its defects
-  # (linkedom, happy-dom, jsdom), or leaves parentNode set on removed nodes (xmldom 0.6); the engine returns true
-  # document order and throws XPathOrderError for node-sets of several trees. The run reports the differences and fails
-  # only on a crash.
+  # (linkedom, happy-dom, jsdom); the engine returns true document order and throws XPathOrderError for node-sets of
+  # several trees. The run reports the differences and fails only on a crash.
   comparison:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        dom: [xmldom06, jsdom, happy, linkedom]
+        dom: [jsdom, happy, linkedom]
     env:
       CANDIDATE: ./src/index.ts
       TOLERATE: result,mixed,order

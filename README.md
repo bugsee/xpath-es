@@ -24,11 +24,17 @@ This repository holds four things:
 
 ### What gates, and where the engine deliberately differs from upstream
 
+**Supported DOMs:** `@xmldom/xmldom` >= 0.8.15 is gated (0.8.15 is its LTS and what the SAML libraries use; the 0.9
+line is gated with the split below, tested with the latest 0.9.x); jsdom, happy-dom, linkedom and the browsers
+(Chromium, Firefox, WebKit) are compared or smoke-tested. Older xmldom (the unscoped `xmldom` package, 0.6 and
+earlier) is not supported or tested: it is unmaintained and has known vulnerabilities. The engine does not check which
+DOM it is given; it takes any DOM-shaped nodes.
+
 | DOM | Status | Gate |
 |---|---|---|
-| `@xmldom/xmldom` 0.8 (what the SAML libraries use) | **gated** | zero differences from upstream, in every scenario and for random expressions, except class 5 below (`CLASSIFY=ns-duplicate`) |
+| `@xmldom/xmldom` 0.8.15 (what the SAML libraries use) | **gated** | zero differences from upstream, in every scenario and for random expressions, except class 5 below (`CLASSIFY=ns-duplicate`) |
 | `@xmldom/xmldom` 0.9 | **gated, split** | `CLASSIFY=all`: no difference where upstream answers and the engine answers, except class 5; every other difference must fall in a documented class, and an unclassified difference fails |
-| xmldom 0.6, jsdom, happy-dom, linkedom | compared, **not gating** | the nightly run reports the differences; it fails only on a crash |
+| jsdom, happy-dom, linkedom | compared, **not gating** | the nightly run reports the differences; it fails only on a crash |
 
 The documented classes (xmldom 0.9):
 
@@ -48,9 +54,8 @@ The documented classes (xmldom 0.9):
   uses the namespace axis.
 
 Why the other DOMs do not gate: upstream delegates ordering to the DOM there and inherits its defects (linkedom's
-`compareDocumentPosition` is not a document order, happy-dom and jsdom misorder or drop attributes), and xmldom 0.6
-leaves `parentNode` set on a removed node. The engine returns true document order, and throws `XPathOrderError` for
-node-sets of several trees and for a context in a removed xmldom 0.6 subtree.
+`compareDocumentPosition` is not a document order, happy-dom and jsdom misorder or drop attributes). The engine
+returns true document order, and throws `XPathOrderError` for node-sets of several trees.
 
 Other deliberate differences:
 
@@ -101,7 +106,7 @@ CANDIDATE=xpath node test/mutation.ts        # the oracle against itself: must s
 | `test/hostile-digests.ts` | records what the oracle answers on each hostile case (`baselines/oracle-digests.json`) |
 | `test/harness-selftest.ts` | a candidate that reverses node-sets must be caught by the fuzzer, a quadratic one by the gate |
 
-The DOM matrix for `<dom>`: `xmldom08` (`@xmldom/xmldom` 0.8.15, the default), `xmldom09`, `xmldom06`, `jsdom`,
+The DOM matrix for `<dom>`: `xmldom08` (`@xmldom/xmldom` 0.8.15, the default), `xmldom09` (`@xmldom/xmldom` 0.9.x), `jsdom`,
 `happy` (happy-dom) and `linkedom`, all dev dependencies with exact versions.
 
 ### The hostile gate and baselines
