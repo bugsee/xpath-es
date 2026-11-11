@@ -129,6 +129,7 @@ jobs:
   # budget and time-limit errors) and the same expressions through upstream xpath, compared in the page.
   browsers:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: build
     strategy:
       fail-fast: false
@@ -144,5 +145,14 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: built
-      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      # The browser's system packages come from apt; the runners' mirrors fail transiently ("Temporary failure resolving"),
+      # so the step is bounded in time and retried rather than hanging for the length of the job.
+      - name: Install the browser and its system dependencies
+        timeout-minutes: 8
+        run: |
+          for attempt in 1 2 3; do
+            npx playwright install --with-deps ${{ matrix.browser }} && exit 0
+            echo "attempt $attempt failed"; sleep 20
+          done
+          exit 1
       - run: node test/browser/run.mjs ${{ matrix.browser }}
