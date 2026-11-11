@@ -41,5 +41,5 @@
         "skipLibCheck": false,
         "skipDefaultLibCheck": false
     },
-    "include": ["src/**/*.ts", "bench/**/*.ts", "test/**/*.ts"]
+    "include": ["src/**/*.ts", "scripts/**/*.ts", "bench/**/*.ts", "test/**/*.ts"]
 }

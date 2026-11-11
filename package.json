@@ -35,14 +35,26 @@
         "url": "https://github.com/bugsee/xpath-es/issues"
     },
     "homepage": "https://github.com/bugsee/xpath-es#readme",
+    "sideEffects": false,
     "engines": {
         "node": ">=22.18"
     },
+    "main": "./dist/cjs/index.js",
+    "module": "./dist/esm/index.js",
+    "types": "./dist/esm/index.d.ts",
+    "exports": {
+        ".": {
+            "import": { "types": "./dist/esm/index.d.ts", "default": "./dist/esm/index.js" },
+            "require": { "types": "./dist/cjs/index.d.ts", "default": "./dist/cjs/index.js" }
+        }
+    },
+    "files": ["dist", "LICENSE"],
     "scripts": {
+        "build": "node scripts/build.ts",
         "typecheck": "node node_modules/typescript-7/bin/tsc --noEmit -p tsconfig.json",
-        "lint": "oxlint --type-aware --tsconfig tsconfig.json -c .oxlintrc.json src test bench",
-        "format": "oxfmt --write \"{src,test,bench}/**/*.ts\"",
-        "format:check": "oxfmt --check \"{src,test,bench}/**/*.ts\"",
+        "lint": "oxlint --type-aware --tsconfig tsconfig.json -c .oxlintrc.json src scripts test bench",
+        "format": "oxfmt --write \"{src,scripts,test,bench}/**/*.ts\"",
+        "format:check": "oxfmt --check \"{src,scripts,test,bench}/**/*.ts\"",
         "check": "npm run typecheck && npm run lint && npm run format:check",
         "fixtures": "node bench/saml-fixtures.ts",
         "test:self": "CANDIDATE=xpath node test/fuzz.ts xmldom08 150 7 all && CANDIDATE=xpath node test/mutation.ts",
