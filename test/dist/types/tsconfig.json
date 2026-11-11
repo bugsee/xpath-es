@@ -1,0 +1,19 @@
+{
+    "extends": "../../../tsconfig.json",
+    "compilerOptions": {
+        // What a consumer has: the ES2022 and DOM libraries and no Node typings, and the declarations are checked
+        // (skipLibCheck is off), through the package's own exports map.
+        "lib": ["es2022", "dom"],
+        "types": [],
+        "noEmit": true,
+        "skipLibCheck": false,
+        // The consumers are examples written in the usual CommonJS and ES module styles; the strict flags stay on.
+        "verbatimModuleSyntax": false,
+        "erasableSyntaxOnly": false,
+        "isolatedDeclarations": false,
+        "declaration": false,
+        "allowImportingTsExtensions": false,
+        "rewriteRelativeImportExtensions": false
+    },
+    "include": ["./*.mts", "./*.cts"]
+}

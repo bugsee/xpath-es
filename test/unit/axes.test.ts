@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { allNodes, loadDom } from '../harness.ts';
-import { XPathProgram } from '../../src/index.ts';
+import { XPathProgram } from '../support/engine.ts';
 
 const parse = loadDom('xmldom08');
 

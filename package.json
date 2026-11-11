@@ -37,30 +37,53 @@
     "homepage": "https://github.com/bugsee/xpath-es#readme",
     "sideEffects": false,
     "engines": {
-        "node": ">=22.18"
+        "node": ">=20"
     },
-    "main": "./dist/cjs/index.js",
-    "module": "./dist/esm/index.js",
-    "types": "./dist/esm/index.d.ts",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
     "exports": {
         ".": {
-            "import": { "types": "./dist/esm/index.d.ts", "default": "./dist/esm/index.js" },
-            "require": { "types": "./dist/cjs/index.d.ts", "default": "./dist/cjs/index.js" }
-        }
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.cts",
+                "default": "./dist/index.cjs"
+            }
+        },
+        "./package.json": "./package.json"
     },
-    "files": ["dist", "LICENSE"],
+    "files": [
+        "dist/*.js",
+        "dist/*.cjs",
+        "dist/*.d.ts",
+        "dist/*.d.cts",
+        "dist/*.map",
+        "LICENSE",
+        "README.md"
+    ],
     "scripts": {
         "build": "node scripts/build.ts",
+        "build:tests": "node scripts/build.ts --tests",
         "typecheck": "node node_modules/typescript-7/bin/tsc --noEmit -p tsconfig.json",
         "lint": "oxlint --type-aware --tsconfig tsconfig.json -c .oxlintrc.json src scripts test bench",
-        "format": "oxfmt --write \"{src,scripts,test,bench}/**/*.ts\"",
-        "format:check": "oxfmt --check \"{src,scripts,test,bench}/**/*.ts\"",
+        "format": "oxfmt --write \"{src,scripts,test,bench}/**/*.{ts,mts,cts,mjs}\"",
+        "format:check": "oxfmt --check \"{src,scripts,test,bench}/**/*.{ts,mts,cts,mjs}\"",
         "check": "npm run typecheck && npm run lint && npm run format:check",
         "fixtures": "node bench/saml-fixtures.ts",
         "test:self": "CANDIDATE=xpath node test/fuzz.ts xmldom08 150 7 all && CANDIDATE=xpath node test/mutation.ts",
         "test:differential": "node test/fuzz.ts xmldom08 300 11 all && node test/mutation.ts && node test/fuzz-expr.ts xmldom08 40 60 5",
         "test:unit": "node --test test/unit/*.test.ts",
         "test:hostile": "node test/hostile.ts",
+        "test:dist": "node --test test/dist/*.test.mjs",
+        "test:dist:types": "node node_modules/typescript-7/bin/tsc -p test/dist/types/tsconfig.json",
+        "test:browser": "node test/browser/run.mjs",
+        "test:built:unit": "XPATH_ES_UNIT_ENGINE=./dist/index.cjs node --test dist-tests/test/unit/*.test.js",
+        "test:built:differential": "CANDIDATE=./dist/index.cjs CLASSIFY=ns-duplicate node dist-tests/test/fuzz.js xmldom08 80 41 all && CANDIDATE=./dist/index.cjs CLASSIFY=all node dist-tests/test/fuzz.js xmldom09 60 42 all && CANDIDATE=./dist/index.cjs node dist-tests/test/mutation.js && CANDIDATE=./dist/index.cjs CLASSIFY=ns-duplicate node dist-tests/test/fuzz-expr.js xmldom08 30 100 43 ns 5000 && CANDIDATE=./dist/index.cjs CLASSIFY=all node dist-tests/test/fuzz-expr.js xmldom09 30 100 44 ns 5000",
+        "test:built:hostile": "CANDIDATE=./dist/index.cjs HOSTILE_STRICT=1 node dist-tests/test/hostile.js",
+        "test:built": "npm run test:dist && npm run test:built:unit && npm run test:built:differential && npm run test:built:hostile",
         "test:harness": "node test/harness-selftest.ts",
         "test": "npm run test:unit && npm run test:harness && npm run test:differential && npm run test:hostile",
         "bench:hostile": "node bench/hostile.ts",
@@ -71,6 +94,7 @@
         "@authenio/xml-encryption": "2.0.2",
         "@types/node": "24.19.2",
         "@xmldom/xmldom": "0.8.15",
+        "acorn": "8.19.0",
         "happy-dom": "21.0.4",
         "jsdom": "31.0.0",
         "linkedom": "0.18.15",
@@ -78,6 +102,7 @@
         "oxfmt": "0.75.0",
         "oxlint": "1.90.0",
         "oxlint-tsgolint": "7.0.2005",
+        "playwright": "1.64.1",
         "samlify": "2.13.1",
         "typescript-7": "npm:typescript@7.0.2",
         "xml-crypto": "6.4.0",

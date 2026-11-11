@@ -10,6 +10,7 @@ import {
 } from './dom.ts';
 import type { DomNode } from './dom.ts';
 import { XPathBudgetError, XPathOrderError, XPathResolveError, XPathTimeoutError } from './errors.ts';
+import { now } from './clock.ts';
 import { Numbering } from './order.ts';
 
 /**
@@ -115,7 +116,7 @@ export class EvalState {
         this.allowAnyNamespaceForNoPrefix = settings.allowAnyNamespaceForNoPrefix;
         this.#budget = settings.budget;
         this.#timeoutMs = settings.timeoutMs;
-        this.#deadline = settings.timeoutMs === 0 ? Number.POSITIVE_INFINITY : performance.now() + settings.timeoutMs;
+        this.#deadline = settings.timeoutMs === 0 ? Number.POSITIVE_INFINITY : now() + settings.timeoutMs;
     }
 
     /** Total node visits charged so far. */
@@ -132,7 +133,7 @@ export class EvalState {
         if (this.#budget !== 0 && this.#work > this.#budget) throw new XPathBudgetError(this.#budget);
         if (this.#work >= this.#nextClockCheck) {
             this.#nextClockCheck = this.#work + CLOCK_CHECK_INTERVAL;
-            if (performance.now() > this.#deadline) throw new XPathTimeoutError(this.#timeoutMs);
+            if (now() > this.#deadline) throw new XPathTimeoutError(this.#timeoutMs);
         }
     }
 

@@ -60,14 +60,14 @@ Other deliberate differences:
 
 ## Running it
 
-Node >= 22.18 (the TypeScript sources run directly, by type stripping; `npm run build` makes `dist/esm` and
-`dist/cjs`).
+Node >= 22.18 (the TypeScript sources run directly, by type stripping; `npm run build` makes the plain JavaScript in
+`dist/`, see [Build and compatibility](#build-and-compatibility)).
 
 ```sh
 npm ci
 npm run check            # tsc (TypeScript 7, every strict flag), oxlint (type-aware), oxfmt --check
 npm run test:unit        # unit tests of the engine (node:test)
-npm run build            # dist/esm and dist/cjs, same compiler and strict options
+npm run build            # dist/: ES modules and CommonJS with declarations, same compiler and strict options
 npm run test:harness     # the harness tests itself on candidates whose verdict is known
 npm run test:differential
 npm run test:hostile
@@ -116,6 +116,43 @@ names). A listed case that is too slow does not fail the run and is reported; on
 so the baseline can shrink when that is stable. A wrong result or an error is never baselined. With no baseline file, or
 `HOSTILE_STRICT=1`, a candidate is judged strictly. `baselines/xpath-fork.json` records what the fork is known to
 be slow on.
+
+## Build and compatibility
+
+`npm run build` compiles `src/` to plain JavaScript with the same compiler and the same strict options as the type
+check (every strict flag, no `any`). The package is not published; this is what it would ship.
+
+```
+dist/index.js     index.d.ts     ES modules (and one .js / .d.ts per source module, flat in dist/)
+dist/index.cjs    index.d.cts    CommonJS (the same modules as .cjs / .d.cts)
+dist/*.js.map  dist/*.cjs.map    source maps with the sources inlined
+```
+
+- **ES2022, not down-levelled.** Classes, `#private` members, class fields and optional chaining are emitted as
+  written. The emitted files contain no TypeScript syntax and do not need Node's type stripping. The sources are
+  compiled against the ES2022 library only (no Node and no DOM typings), so they cannot use a newer API, and nothing
+  from Node's typings reaches the `.d.ts` files.
+- **Node >= 20** and recent browsers (`engines.node` is `>=20`). Developing in this repository, which runs the
+  TypeScript sources and tests directly, needs Node >= 22.18.
+- **`package.json`:** an `exports` map (`types` / `import` / `require`, so a TypeScript consumer gets `index.d.ts` or
+  `index.d.cts`), `main`, `module`, `types`, `files` (only `dist/`, the licence and this readme are packed) and
+  `"sideEffects": false`.
+- **Browser-safe.** The code imports nothing from Node (no `node:` modules, no packages); the ES module entry is the
+  browser entry. The time limit reads `globalThis.performance.now()` and falls back to `Date.now()` where there is
+  no `performance` object.
+- **Declarations** are emitted without declaration maps: the maps would point at sources that are not shipped.
+
+What checks it, on the built output rather than the sources (`npm run build`, then):
+
+| check | command |
+|---|---|
+| exports through `import` and `require`, the same names from both, the time limit without `performance`; the emitted files parse as ES2022 (acorn), keep their classes, `#private` members and `?.`, contain no TypeScript and no Node import; the declarations have no Node reference; `npm pack --dry-run` content | `npm run test:dist` |
+| a TypeScript consumer (ES2022 + DOM libraries, no Node typings) compiles against the declarations for both conditions | `npm run test:dist:types` |
+| unit tests, a reduced differential gate (xmldom 0.8 and 0.9, mutation, random expressions) and the strict hostile gate, with the candidate pointed at `dist/index.cjs`, on the tests compiled to JavaScript (`npm run build:tests`) | `npm run test:built` |
+| real browsers (Playwright: Chromium, Firefox, WebKit): expressions on `DOMParser` documents including namespaces, an HTML document and the budget and time-limit errors, and the same expressions through upstream `xpath` compared in the page | `npx playwright install chromium && npm run test:browser` |
+
+CI runs the first three on Node 20, 22 and 24 and the browser check on all three engines. WebKit is Playwright's
+build, not Safari itself, and no real mobile browser is tested.
 
 ## Licence, credits and references
 
