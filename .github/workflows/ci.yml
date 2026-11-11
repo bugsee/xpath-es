@@ -128,9 +128,7 @@ jobs:
   # The ES module build in real browsers: a few expressions on DOMParser documents (namespaces, an HTML document, the
   # budget and time-limit errors) and the same expressions through upstream xpath, compared in the page.
   browsers:
-    # Pinned: Playwright's system packages come from apt, and on the ubuntu-latest image (26.04) the Ubuntu mirrors did
-    # not resolve at all during the first runs of this job ("Temporary failure resolving"); 24.04 is Playwright's
-    # supported baseline.
+    # Pinned to 24.04, Playwright's supported baseline, so that the ubuntu-latest move to 26.04 cannot change the job.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: build
@@ -148,14 +146,15 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: built
-      # The browser's system packages come from apt; the runners' mirrors fail transiently ("Temporary failure resolving"),
-      # so the step is bounded in time and retried rather than hanging for the length of the job.
-      - name: Install the browser and its system dependencies
-        timeout-minutes: 8
+      # The browser's system packages come from apt. When the Ubuntu mirrors cannot be reached ("Temporary failure
+      # resolving", as on the first runs of this job) the apt step is abandoned after three minutes and the browser is
+      # installed without system packages: Chromium and Firefox then run on what the runner image already has, and a
+      # missing library is reported by Playwright when the browser starts.
+      - name: Install the browser (and its system packages when apt is reachable)
+        timeout-minutes: 10
         run: |
-          for attempt in 1 2 3; do
-            npx playwright install --with-deps ${{ matrix.browser }} && exit 0
-            echo "attempt $attempt failed"; sleep 20
-          done
-          exit 1
+          if ! timeout 180 npx playwright install --with-deps ${{ matrix.browser }}; then
+            echo "::warning::apt was not usable; installing ${{ matrix.browser }} without system packages"
+            npx playwright install ${{ matrix.browser }}
+          fi
       - run: node test/browser/run.mjs ${{ matrix.browser }}
