@@ -6,6 +6,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { DOMParser } from '@xmldom/xmldom';
 
@@ -78,27 +80,41 @@ test('the time limit works, and the engine still loads, where there is no perfor
     assert.equal(run.stdout.trim(), 'timeout', run.stderr);
 });
 
-// A clock that is read at a small origin (performance.now) and once, by accident, as something else must not make the
-// time limit fire at once. The old per-reading fallback to Date.now() compared an absolute Unix timestamp with a
-// deadline taken from performance.now() and fired on the spot.
-test('a single odd reading from performance.now does not fire the time limit, and the limit is never mixed with Date.now', () => {
+// The clock gives Unix-epoch milliseconds whichever source answers: performance.timeOrigin + performance.now() where
+// there is a performance object, Date.now() otherwise. A bare performance.now() (an offset such as 86423.4) is wrong.
+function clockReading(performanceStub) {
     const script = `
-        let calls = 0;
-        Object.defineProperty(globalThis, 'performance', {
-            value: { now: () => (++calls === 2 ? undefined : calls * 0.001) },
-            configurable: true
-        });
-        const engine = await import('xpath-es');
-        const { DOMParser } = await import('@xmldom/xmldom');
-        const doc = new DOMParser().parseFromString('<r>' + '<a>x</a>'.repeat(6000) + '</r>', 'text/xml');
-        try {
-            const { value } = new engine.XPathProgram('count(//a)').run({ node: doc, budget: 0, timeoutMs: 600000 });
-            console.log('ok ' + value + ' reads=' + calls);
-        } catch (error) { console.log(error instanceof engine.XPathTimeoutError ? 'timeout' : String(error)); }
+        ${performanceStub}
+        const { now } = await import(${JSON.stringify(pathToFileURL(join(process.cwd(), 'dist', 'clock.js')).href)});
+        console.log(JSON.stringify([now(), Date.now()]));
     `;
     const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
         encoding: 'utf8',
         cwd: process.cwd()
     });
-    assert.match(run.stdout.trim(), /^ok 6000 reads=\d+$/, run.stderr);
+    assert.equal(run.status, 0, run.stderr);
+    return JSON.parse(run.stdout.trim());
+}
+
+test('the clock returns epoch milliseconds with the real performance object', () => {
+    const [reading, wall] = clockReading('');
+    assert.ok(Math.abs(reading - wall) < 5000, `reading ${reading} is not near Date.now() ${wall}`);
+});
+
+test('the clock adds timeOrigin to performance.now() and does not use the bare offset', () => {
+    const [reading, wall] = clockReading(
+        "Object.defineProperty(globalThis, 'performance', { value: { timeOrigin: 1794411376000, now: () => 976.5 }, configurable: true });"
+    );
+    assert.equal(reading, 1794411376976.5);
+    assert.ok(wall > 0);
+});
+
+test('the clock falls back to Date.now() when there is no usable performance object', () => {
+    for (const stub of [
+        "Object.defineProperty(globalThis, 'performance', { value: undefined, configurable: true });",
+        "Object.defineProperty(globalThis, 'performance', { value: { now: () => 5 }, configurable: true });"
+    ]) {
+        const [reading, wall] = clockReading(stub);
+        assert.ok(Math.abs(reading - wall) < 5000, `reading ${reading} is not near Date.now() ${wall}`);
+    }
 });
