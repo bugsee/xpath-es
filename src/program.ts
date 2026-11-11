@@ -24,8 +24,13 @@ export interface EvaluateOptions {
     readonly callbacks?: { readonly namespaces?: boolean; readonly variables?: boolean } | undefined;
     readonly caseInsensitive?: boolean | undefined;
     readonly allowAnyNamespaceForNoPrefix?: boolean | undefined;
-    /** Node visits allowed; 0 or omitted means no limit. */
+    /**
+     * Work allowed, in node visits (and, for string functions, characters scanned in sixteenths): the evaluation
+     * throws XPathBudgetError when it is exhausted. Omitted means DEFAULT_BUDGET; 0 means no limit.
+     */
     readonly budget?: number | undefined;
+    /** Wall-clock milliseconds allowed: XPathTimeoutError when exceeded. Omitted means DEFAULT_TIMEOUT_MS; 0 means none. */
+    readonly timeoutMs?: number | undefined;
     /** Tuning knob for the benchmark; default true. */
     readonly mergeUnions?: boolean | undefined;
 }
@@ -50,6 +55,14 @@ export const lookupNamespaceInDom: NamespaceLookup = (prefix, node) => {
     }
     return null;
 };
+
+/**
+ * Limits applied when the caller gives none, so that no evaluation is unbounded by accident. The budget is the
+ * deterministic limit (the same on every machine); the time limit is the backstop for work the budget does not
+ * model. A caller with a larger legitimate document raises them; 0 turns a limit off.
+ */
+export const DEFAULT_BUDGET = 200_000_000;
+export const DEFAULT_TIMEOUT_MS = 10_000;
 
 const isPositiveInteger = (value: number): boolean => value >= 1 && Math.floor(value) === value;
 
@@ -96,7 +109,8 @@ export class XPathProgram {
             variables: options.variables ?? null,
             functions: options.functions ?? null,
             pure: !XPathProgram.forceSlowPath && !namespaceCallback && !variableCallback && !functionCallback,
-            budget: options.budget ?? 0,
+            budget: options.budget ?? DEFAULT_BUDGET,
+            timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
             mergeUnions: options.mergeUnions ?? true
         });
         return { value: this.#run({ node, position, size }, state), state };

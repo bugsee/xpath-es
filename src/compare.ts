@@ -30,7 +30,7 @@ function scalarToNumber(value: string | number | boolean): number {
 
 function anyNodeNumber(set: NodeSet, op: Relational, other: number, state: EvalState): boolean {
     state.charge(set.size);
-    for (const node of set.unordered) if (relate(op, stringToNumber(stringValueOf(node)), other)) return true;
+    for (const node of set.unordered) if (relate(op, stringToNumber(stringValueOf(node, state)), other)) return true;
     return false;
 }
 
@@ -44,7 +44,7 @@ function equalSetScalar(set: NodeSet, other: string | number | boolean, negate: 
     if (typeof other === 'boolean') return (set.size > 0 === other) !== negate;
     state.charge(set.size);
     for (const node of set.unordered) {
-        const text = stringValueOf(node);
+        const text = stringValueOf(node, state);
         const equal = typeof other === 'number' ? stringToNumber(text) === other : text === other;
         if (equal !== negate) return true;
     }
@@ -56,9 +56,9 @@ function equalSets(left: NodeSet, right: NodeSet, negate: boolean, state: EvalSt
     if (left.size === 0 || right.size === 0) return false;
     state.charge(left.size + right.size);
     const values = new Set<string>();
-    for (const node of right.unordered) values.add(stringValueOf(node));
+    for (const node of right.unordered) values.add(stringValueOf(node, state));
     if (negate && values.size > 1) return true;
-    for (const node of left.unordered) if (values.has(stringValueOf(node)) !== negate) return true;
+    for (const node of left.unordered) if (values.has(stringValueOf(node, state)) !== negate) return true;
     return false;
 }
 
@@ -71,13 +71,13 @@ function relateSets(left: NodeSet, right: NodeSet, op: Relational, state: EvalSt
     let seenA = false;
     let seenB = false;
     for (const node of left.unordered) {
-        const value = stringToNumber(stringValueOf(node));
+        const value = stringToNumber(stringValueOf(node, state));
         if (Number.isNaN(value)) continue;
         seenA = true;
         a = less ? Math.min(a, value) : Math.max(a, value);
     }
     for (const node of right.unordered) {
-        const value = stringToNumber(stringValueOf(node));
+        const value = stringToNumber(stringValueOf(node, state));
         if (Number.isNaN(value)) continue;
         seenB = true;
         b = less ? Math.max(b, value) : Math.min(b, value);

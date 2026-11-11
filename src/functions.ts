@@ -65,7 +65,7 @@ function stringArgs(
 
 function optionalString(name: string, args: readonly Compiled[], focus: Focus, state: EvalState): string {
     const arg = args[0];
-    if (arg === undefined) return stringValueOf(focus.node);
+    if (arg === undefined) return stringValueOf(focus.node, state);
     if (args.length !== 1) throw expects(name, '(string?)');
     return toStringValue(arg(focus, state), state);
 }
@@ -83,8 +83,26 @@ function oneNodeSet(name: string, args: readonly Compiled[], focus: Focus, state
     return value;
 }
 
-const SPACE_RUN = /[ \t\r\n]+/g;
-const SPACE_EDGES = /^[ \t\r\n]+|[ \t\r\n]+$/g;
+const isSpace = (code: number): boolean => code === 0x20 || code === 0x09 || code === 0x0d || code === 0x0a;
+
+/**
+ * normalize-space(): trims and collapses runs of space, tab, CR and LF. One pass; upstream's two regular
+ * expressions (`^\s+|\s+$` and a run collapse) backtrack quadratically on a long string that has inner runs of spaces.
+ */
+function normalizeSpace(text: string): string {
+    let out = '';
+    let pending = false;
+    for (let i = 0; i < text.length; i++) {
+        if (isSpace(text.charCodeAt(i))) {
+            pending = out.length > 0;
+        } else {
+            if (pending) out += ' ';
+            pending = false;
+            out += text.charAt(i);
+        }
+    }
+    return out;
+}
 const ID_SEPARATOR = /[\r\n\t ]+/;
 
 export function compileCoreFunction(name: string, args: readonly Compiled[]): Compiled | null {
@@ -139,7 +157,7 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
         case 'string':
             return (focus, state) => {
                 const arg = args[0];
-                if (arg === undefined) return stringValueOf(focus.node);
+                if (arg === undefined) return stringValueOf(focus.node, state);
                 if (args.length !== 1) throw expects(name, '(object?)');
                 return toStringValue(arg(focus, state), state);
             };
@@ -148,26 +166,31 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                 if (args.length < 2) throw expects(name, '(string, string[, string]*)');
                 let text = '';
                 for (const arg of args) text += toStringValue(arg(focus, state), state);
+                state.charge(text.length >> 4);
                 return text;
             };
         case 'starts-with':
             return (focus, state) => {
                 const [text = '', prefix = ''] = stringArgs('startsWith', '(string, string)', 2, args, focus, state);
+                state.charge(prefix.length >> 4);
                 return text.startsWith(prefix);
             };
         case 'contains':
             return (focus, state) => {
                 const [text = '', part = ''] = stringArgs(name, '(string, string)', 2, args, focus, state);
+                state.charge(text.length >> 4);
                 return text.includes(part);
             };
         case 'substring-before':
             return (focus, state) => {
                 const [text = '', part = ''] = stringArgs(name, '(string, string)', 2, args, focus, state);
+                state.charge(text.length >> 4);
                 return text.substring(0, text.indexOf(part));
             };
         case 'substring-after':
             return (focus, state) => {
                 const [text = '', part = ''] = stringArgs(name, '(string, string)', 2, args, focus, state);
+                state.charge(text.length >> 4);
                 const at = text.indexOf(part);
                 return at === -1 ? '' : text.substring(at + part.length);
             };
@@ -185,8 +208,11 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
         case 'string-length':
             return (focus, state) => optionalString(name, args, focus, state).length;
         case 'normalize-space':
-            return (focus, state) =>
-                optionalString(name, args, focus, state).replace(SPACE_EDGES, '').replace(SPACE_RUN, ' ');
+            return (focus, state) => {
+                const text = optionalString(name, args, focus, state);
+                state.charge(text.length >> 4);
+                return normalizeSpace(text);
+            };
         case 'translate':
             return (focus, state) => {
                 const [text = '', from = '', to = ''] = stringArgs(
@@ -197,6 +223,7 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                     focus,
                     state
                 );
+                state.charge((text.length + from.length) >> 4);
                 const map = new Map<string, string>();
                 for (let i = 0; i < from.length; i++) {
                     const ch = from.charAt(i);
@@ -257,7 +284,7 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
         case 'number':
             return (focus, state) => {
                 const arg = args[0];
-                if (arg === undefined) return stringToNumber(stringValueOf(focus.node));
+                if (arg === undefined) return stringToNumber(stringValueOf(focus.node, state));
                 if (args.length !== 1) throw expects(name, '(object?)');
                 return toNumberValue(arg(focus, state), state);
             };
@@ -266,7 +293,7 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                 const set = oneNodeSet(name, args, focus, state);
                 state.charge(set.size);
                 let total = 0;
-                for (const node of set.unordered) total += stringToNumber(stringValueOf(node));
+                for (const node of set.unordered) total += stringToNumber(stringValueOf(node, state));
                 return total;
             };
         case 'floor':

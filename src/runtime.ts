@@ -9,7 +9,7 @@ import {
     TEXT_NODE
 } from './dom.ts';
 import type { DomNode } from './dom.ts';
-import { XPathBudgetError, XPathOrderError, XPathResolveError } from './errors.ts';
+import { XPathBudgetError, XPathOrderError, XPathResolveError, XPathTimeoutError } from './errors.ts';
 import { Numbering } from './order.ts';
 
 /**
@@ -84,9 +84,14 @@ export interface EvalSettings {
     readonly pure: boolean;
     /** Node visits allowed, or 0 for no limit. */
     readonly budget: number;
+    /** Wall-clock milliseconds allowed, or 0 for no limit. Checked as work is charged, not on a timer. */
+    readonly timeoutMs: number;
     /** Union strategy: merge ordered operands on document-order keys (true) or concatenate and sort lazily (false). */
     readonly mergeUnions: boolean;
 }
+
+/** Work units between two looks at the clock: rare enough to be free, frequent enough to stop within milliseconds. */
+const CLOCK_CHECK_INTERVAL = 4096;
 
 export class EvalState {
     readonly settings: EvalSettings;
@@ -96,6 +101,9 @@ export class EvalState {
     #numbering: Numbering | null = null;
     #work = 0;
     readonly #budget: number;
+    readonly #timeoutMs: number;
+    readonly #deadline: number;
+    #nextClockCheck = CLOCK_CHECK_INTERVAL;
     readonly #prefixes = new Map<string, string>();
     /** Per-site caches (sibling ranks). Only filled when `pure`, so they cannot outlive a change to the DOM. */
     readonly siteCaches: Map<object, Map<DomNode, number>> = new Map<object, Map<DomNode, number>>();
@@ -106,6 +114,8 @@ export class EvalState {
         this.caseInsensitive = settings.caseInsensitive;
         this.allowAnyNamespaceForNoPrefix = settings.allowAnyNamespaceForNoPrefix;
         this.#budget = settings.budget;
+        this.#timeoutMs = settings.timeoutMs;
+        this.#deadline = settings.timeoutMs === 0 ? Number.POSITIVE_INFINITY : performance.now() + settings.timeoutMs;
     }
 
     /** Total node visits charged so far. */
@@ -113,9 +123,17 @@ export class EvalState {
         return this.#work;
     }
 
+    /**
+     * Charges work (node visits, or characters scanned) against the budget and, every CLOCK_CHECK_INTERVAL units,
+     * against the wall-clock limit. Every loop whose length depends on the document or on a string calls this.
+     */
     charge(visits: number): void {
         this.#work += visits;
         if (this.#budget !== 0 && this.#work > this.#budget) throw new XPathBudgetError(this.#budget);
+        if (this.#work >= this.#nextClockCheck) {
+            this.#nextClockCheck = this.#work + CLOCK_CHECK_INTERVAL;
+            if (performance.now() > this.#deadline) throw new XPathTimeoutError(this.#timeoutMs);
+        }
     }
 
     /** Document order for a duplicate-free array. Throws XPathOrderError when the nodes are not in one tree. */
@@ -176,13 +194,15 @@ export class EvalState {
  * String-value of a node. Iterative. Q-STRVAL: text is collected from Text and CDATA children and from Element,
  * Document and DocumentFragment children recursively; an attribute gives `value || nodeValue`.
  */
-export function stringValueOf(node: DomNode): string {
+export function stringValueOf(node: DomNode, state?: EvalState): string {
     const type = node.nodeType;
     if (type === ATTRIBUTE_NODE) return node.value || (node.nodeValue ?? '');
     if (type !== ELEMENT_NODE && type !== DOCUMENT_NODE && type !== DOCUMENT_FRAGMENT_NODE) return node.nodeValue ?? '';
     let text = '';
+    let visits = 1;
     let current: DomNode | null | undefined = node.firstChild;
     while (current != null) {
+        visits++;
         const kind = current.nodeType;
         let next: DomNode | null | undefined = null;
         if (kind === TEXT_NODE || kind === CDATA_SECTION_NODE) text += current.nodeValue ?? '';
@@ -194,6 +214,7 @@ export function stringValueOf(node: DomNode): string {
         }
         current = next;
     }
+    state?.charge(visits + (text.length >> 4));
     return text;
 }
 
@@ -226,7 +247,7 @@ export function toStringValue(value: XValue, state: EvalState): string {
     if (typeof value === 'number') return numberToString(value);
     if (typeof value === 'boolean') return value ? 'true' : 'false';
     const first = value.first(state);
-    return first === null ? '' : stringValueOf(first);
+    return first === null ? '' : stringValueOf(first, state);
 }
 
 /** Q-NUM-3: a node-set becomes a number through JavaScript's Number(), so '' is 0 and '0x10' is 16. */

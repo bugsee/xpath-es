@@ -55,6 +55,13 @@ export class XPathBudgetError extends XPathError {
     }
 }
 
+/** The per-evaluation wall-clock limit ran out. */
+export class XPathTimeoutError extends XPathError {
+    constructor(limitMs: number) {
+        super('BUDGET', `XPath evaluation exceeded its time limit of ${limitMs} ms`);
+    }
+}
+
 /** The context node, position or size is not usable. */
 export class XPathContextError extends XPathError {
     constructor(message: string) {

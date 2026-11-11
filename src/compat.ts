@@ -313,6 +313,10 @@ export interface XPathEvaluateOptions {
     size?: number | undefined;
     allowAnyNamespaceForNoPrefix?: boolean | undefined;
     isHtml?: boolean | undefined;
+    /** xpath-es extension (not in upstream): work limit, see EvaluateOptions.budget. */
+    budget?: number | undefined;
+    /** xpath-es extension (not in upstream): wall-clock limit in milliseconds, see EvaluateOptions.timeoutMs. */
+    timeoutMs?: number | undefined;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -381,7 +385,9 @@ function toEngineOptions(options: XPathEvaluateOptions | undefined): EvaluateOpt
         functions: functionLookup,
         callbacks: { namespaces: namespaces?.callback ?? false, variables: variables?.callback ?? false },
         caseInsensitive: options.isHtml === true,
-        allowAnyNamespaceForNoPrefix: options.allowAnyNamespaceForNoPrefix ?? options.isHtml === true
+        allowAnyNamespaceForNoPrefix: options.allowAnyNamespaceForNoPrefix ?? options.isHtml === true,
+        budget: options.budget,
+        timeoutMs: options.timeoutMs
     };
 }
 
