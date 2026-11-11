@@ -77,3 +77,28 @@ test('the time limit works, and the engine still loads, where there is no perfor
     });
     assert.equal(run.stdout.trim(), 'timeout', run.stderr);
 });
+
+// A clock that is read at a small origin (performance.now) and once, by accident, as something else must not make the
+// time limit fire at once. The old per-reading fallback to Date.now() compared an absolute Unix timestamp with a
+// deadline taken from performance.now() and fired on the spot.
+test('a single odd reading from performance.now does not fire the time limit, and the limit is never mixed with Date.now', () => {
+    const script = `
+        let calls = 0;
+        Object.defineProperty(globalThis, 'performance', {
+            value: { now: () => (++calls === 2 ? undefined : calls * 0.001) },
+            configurable: true
+        });
+        const engine = await import('xpath-es');
+        const { DOMParser } = await import('@xmldom/xmldom');
+        const doc = new DOMParser().parseFromString('<r>' + '<a>x</a>'.repeat(6000) + '</r>', 'text/xml');
+        try {
+            const { value } = new engine.XPathProgram('count(//a)').run({ node: doc, budget: 0, timeoutMs: 600000 });
+            console.log('ok ' + value + ' reads=' + calls);
+        } catch (error) { console.log(error instanceof engine.XPathTimeoutError ? 'timeout' : String(error)); }
+    `;
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+        encoding: 'utf8',
+        cwd: process.cwd()
+    });
+    assert.match(run.stdout.trim(), /^ok 6000 reads=\d+$/, run.stderr);
+});
