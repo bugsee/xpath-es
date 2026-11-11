@@ -107,7 +107,8 @@ async function runOne(mode: Mode, iterations: number): Promise<Outcome> {
     const rows: { doc: string; ms: number; outcome: string; digest: string }[] = [];
     for (const [doc, body] of [
         ['signed response, 4 KiB', fixtures.small],
-        ['signed response, 1,000 groups, 82 KiB', fixtures.large]
+        ['signed response, 1,000 groups, 82 KiB', fixtures.large],
+        ['signed response, 2,000 groups, 164 KiB', fixtures.groups2000]
     ] as const) {
         const parseOnce = async (): Promise<string> => {
             try {

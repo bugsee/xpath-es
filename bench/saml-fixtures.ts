@@ -20,6 +20,8 @@ export interface Fixtures {
     readonly spMetadata: string;
     readonly small: string;
     readonly large: string;
+    /** A signed response with a 2,000-value group list (about 164 KiB). */
+    readonly groups2000: string;
 }
 
 export function readFixtures(): Fixtures {
@@ -28,7 +30,8 @@ export function readFixtures(): Fixtures {
         idpMetadata: read('idp-metadata.xml'),
         spMetadata: read('sp-metadata.xml'),
         small: read('response-small.b64'),
-        large: read('response-1000-groups.b64')
+        large: read('response-1000-groups.b64'),
+        groups2000: read('response-2000-groups.b64')
     };
 }
 
@@ -184,14 +187,16 @@ async function build(): Promise<void> {
     const sp = call(saml, 'ServiceProvider', { metadata: spMetadata, nameIDFormat: NAMEID_EMAIL });
     const small = await signedResponse(saml, idp, sp, 0);
     const large = await signedResponse(saml, idp, sp, 1000);
+    const groups2000 = await signedResponse(saml, idp, sp, 2000);
     mkdirSync(FIXTURE_DIR, { recursive: true });
     writeFileSync(path.join(FIXTURE_DIR, 'idp-metadata.xml'), text(call(idp, 'getMetadata')));
     writeFileSync(path.join(FIXTURE_DIR, 'sp-metadata.xml'), spMetadata);
     writeFileSync(path.join(FIXTURE_DIR, 'response-small.b64'), small);
     writeFileSync(path.join(FIXTURE_DIR, 'response-1000-groups.b64'), large);
+    writeFileSync(path.join(FIXTURE_DIR, 'response-2000-groups.b64'), groups2000);
     const size = (b64: string): string => `${(Buffer.from(b64, 'base64').length / 1024).toFixed(1)} KiB`;
     console.log(
-        `fixtures in ${path.relative(process.cwd(), FIXTURE_DIR)}: small ${size(small)}, 1,000 groups ${size(large)}`
+        `fixtures in ${path.relative(process.cwd(), FIXTURE_DIR)}: small ${size(small)}, 1,000 groups ${size(large)}, 2,000 groups ${size(groups2000)}`
     );
 }
 
