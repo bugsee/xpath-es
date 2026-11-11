@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loadDom } from '../harness.ts';
+import { stringToNumber } from '../../src/runtime.ts';
 import {
     DEFAULT_BUDGET,
     DEFAULT_TIMEOUT_MS,
@@ -105,4 +106,21 @@ void test('normalize-space matches the specification on edge cases', () => {
             JSON.stringify(input)
         );
     }
+});
+
+void test('stringToNumber accepts exactly what upstream’s pattern accepts, and is linear', () => {
+    const upstream = /^\s*-?[0-9]*\.?[0-9]+\s*$/;
+    const alphabet = ['0', '1', '9', '.', '-', '+', ' ', '\t', '\n', ' ', ' ', '﻿', '​', 'x', 'e'];
+    let state = 12345;
+    const next = (): number => (state = (state * 1664525 + 1013904223) % 4294967296) / 4294967296;
+    for (let i = 0; i < 200_000; i++) {
+        let text = '';
+        for (let n = Math.floor(next() * 9); n > 0; n--) text += alphabet[Math.floor(next() * alphabet.length)] ?? '';
+        const expected = upstream.test(text) ? Number.parseFloat(text) : Number.NaN;
+        assert.ok(Object.is(stringToNumber(text), expected), JSON.stringify(text));
+    }
+    const start = process.hrtime.bigint();
+    assert.ok(Number.isNaN(stringToNumber(`${'0'.repeat(500_000)}x`)));
+    assert.ok(Number.isNaN(stringToNumber(`${' '.repeat(500_000)}x`)));
+    assert.ok(Number(process.hrtime.bigint() - start) / 1e6 < 500);
 });

@@ -218,11 +218,54 @@ export function stringValueOf(node: DomNode, state?: EvalState): string {
     return text;
 }
 
-const NUMBER_FORMAT = /^\s*-?[0-9]*\.?[0-9]+\s*$/;
+/** JavaScript's `\s` (the white space of ECMAScript's WhiteSpace and LineTerminator productions). */
+function isJavaScriptSpace(code: number): boolean {
+    return (
+        (code >= 0x09 && code <= 0x0d) ||
+        code === 0x20 ||
+        code === 0xa0 ||
+        code === 0x1680 ||
+        (code >= 0x2000 && code <= 0x200a) ||
+        code === 0x2028 ||
+        code === 0x2029 ||
+        code === 0x202f ||
+        code === 0x205f ||
+        code === 0x3000 ||
+        code === 0xfeff
+    );
+}
+
+const isDigit = (code: number): boolean => code >= 0x30 && code <= 0x39;
+
+/**
+ * Upstream's number pattern, `^\s*-?[0-9]*\.?[0-9]+\s*$`, as a single pass. The regular expression backtracks
+ * quadratically on a long run of digits that is not followed by the end of the string ("0000...0x"): CodeQL's
+ * js/polynomial-redos, and 7 s for 80,000 digits. Same language: white space, an optional minus, then either digits
+ * (at least one) or optional digits, a dot and digits (at least one), then white space.
+ */
+function isNumberFormat(text: string): boolean {
+    const length = text.length;
+    let at = 0;
+    while (at < length && isJavaScriptSpace(text.charCodeAt(at))) at++;
+    if (at < length && text.charCodeAt(at) === 0x2d) at++;
+    const integerStart = at;
+    while (at < length && isDigit(text.charCodeAt(at))) at++;
+    const integerDigits = at - integerStart;
+    if (at < length && text.charCodeAt(at) === 0x2e) {
+        at++;
+        const fractionStart = at;
+        while (at < length && isDigit(text.charCodeAt(at))) at++;
+        if (at === fractionStart) return false;
+    } else if (integerDigits === 0) {
+        return false;
+    }
+    while (at < length && isJavaScriptSpace(text.charCodeAt(at))) at++;
+    return at === length;
+}
 
 /** string -> number. Q-NUM-1: upstream's pattern (no exponent, no leading `+`, JavaScript `\s`). */
 export function stringToNumber(text: string): number {
-    return NUMBER_FORMAT.test(text) ? Number.parseFloat(text) : Number.NaN;
+    return isNumberFormat(text) ? Number.parseFloat(text) : Number.NaN;
 }
 
 /** number -> string. Q-NUM-2: exponents are expanded by upstream's digit padding, which mangles negative numbers. */
