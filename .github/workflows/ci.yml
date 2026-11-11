@@ -128,7 +128,10 @@ jobs:
   # The ES module build in real browsers: a few expressions on DOMParser documents (namespaces, an HTML document, the
   # budget and time-limit errors) and the same expressions through upstream xpath, compared in the page.
   browsers:
-    runs-on: ubuntu-latest
+    # Pinned: Playwright's system packages come from apt, and on the ubuntu-latest image (26.04) the Ubuntu mirrors did
+    # not resolve at all during the first runs of this job ("Temporary failure resolving"); 24.04 is Playwright's
+    # supported baseline.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: build
     strategy:
