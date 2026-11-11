@@ -21,6 +21,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
+      - run: npm run build
+      - run: npm run test:unit
 
   differential:
     runs-on: ubuntu-latest
@@ -50,3 +52,22 @@ jobs:
       - run: npm ci
       # Judged with the candidate's baseline (baselines/xpath-fork.json): known-slow shapes are listed, not failed.
       - run: npm run test:hostile
+
+  engine:
+    runs-on: ubuntu-latest
+    needs: check
+    env:
+      CANDIDATE: ./src/index.ts
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # The engine in src/ against upstream xpath on the DOMs it must equal (xmldom 0.8, the one the SAML libraries use,
+      # and 0.6 apart from removed subtrees); the other DOMs differ by design, see the README.
+      - run: node test/fuzz.ts xmldom08 300 31 all
+      - run: node test/mutation.ts
+      - run: node test/fuzz-expr.ts xmldom08 60 100 31 ns 5000
+      - run: HOSTILE_STRICT=1 node test/hostile.ts
