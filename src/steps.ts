@@ -807,9 +807,13 @@ function precedingOfSet(
         let cut = out.length;
         for (let node: DomNode | null = root; node !== null; node = following(node, root)) {
             visits++;
-            if (pending.delete(node)) cut = out.length;
+            if (pending.delete(node)) {
+                cut = out.length;
+                // The last context is not before itself: its predicates must not be evaluated on it (upstream
+                // never does, and a predicate such as lang() can throw on a node that is no candidate).
+                if (pending.size === 0) break;
+            }
             if (passesAll(node, step, focus, state)) out.push(node);
-            if (pending.size === 0) break;
         }
         out.length = cut;
     }
