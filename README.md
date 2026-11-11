@@ -151,8 +151,9 @@ What checks it, on the built output rather than the sources (`npm run build`, th
 | unit tests, a reduced differential gate (xmldom 0.8 and 0.9, mutation, random expressions) and the strict hostile gate, with the candidate pointed at `dist/index.cjs`, on the tests compiled to JavaScript (`npm run build:tests`) | `npm run test:built` |
 | real browsers (Playwright: Chromium, Firefox, WebKit): expressions on `DOMParser` documents including namespaces, an HTML document and the budget and time-limit errors, and the same expressions through upstream `xpath` compared in the page | `npx playwright install chromium && npm run test:browser` |
 
-CI runs the first three on Node 20, 22 and 24 and the browser check on all three engines. WebKit is Playwright's
-build, not Safari itself, and no real mobile browser is tested.
+CI runs the first three on Node 20, 22 and 24 and the browser check on all three engines (WebKit is reported but does
+not block while the runners cannot install its system libraries from apt). WebKit is Playwright's build, not Safari
+itself, and no real mobile browser is tested.
 
 ## Licence, credits and references
 
