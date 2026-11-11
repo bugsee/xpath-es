@@ -7,6 +7,9 @@
 //
 //   node test/fuzz.ts <dom> <documents> [seed] [corpus: fuzz|all]
 //   SAMPLES=1 node test/fuzz.ts ...        print one example of each kind of difference
+//   CLASSIFY=all node test/fuzz.ts ...     the split gate (xmldom 0.9): a difference is allowed only when it falls in
+//                                          one of the documented classes below; anything else fails the run
+//   CLASSIFY=ns-duplicate node ...         the same with class 5 only (xmldom 0.8: everything else must be equal)
 //   TOLERATE=order node test/fuzz.ts ...   do not fail on the listed kinds
 
 import { CORPUS, FUZZ_QUERIES } from './corpus.ts';
@@ -23,7 +26,10 @@ import {
     loadOracle,
     makeRandom
 } from './harness.ts';
+import { allowedClasses, classifyDifference, DOCUMENTED } from './support/classify.ts';
+import type { Scenario } from './support/classify.ts';
 import { isDomNode } from './support/dom.ts';
+import { loadInternedOracle } from './support/interned-oracle.ts';
 import type { DomNode } from './support/dom.ts';
 
 const domName = process.argv[2] ?? 'xmldom08';
@@ -33,16 +39,18 @@ const random = makeRandom(Number(process.argv[4] ?? 12345));
 const queries = process.argv[5] === 'all' ? CORPUS : FUZZ_QUERIES;
 const parse = loadDom(domName);
 const upstream = loadOracle();
+const interned = loadInternedOracle();
 const candidate = loadCandidate();
 
 function pick<T>(items: readonly T[]): T | undefined {
     return items[Math.floor(random() * items.length)];
 }
 
-type Scenario = 'static' | 'mutated' | 'detached' | 'fragment' | 'twodocs' | 'pairs' | 'pairs-two-trees';
 type Kind = 'equal' | 'message' | 'order' | 'mixed' | 'result';
 const tally = new Map<string, number>();
 const samples = new Map<string, string>();
+const classes = new Map<string, number>();
+const unclassified: string[] = [];
 let upstreamThrows = 0;
 
 function indexOf(roots: readonly DomNode[]): Map<unknown, number> {
@@ -59,6 +67,11 @@ function attempt(run: () => unknown, index: ReadonlyMap<unknown, number>): strin
     }
 }
 
+/** CLASSIFY=all allows every documented class; CLASSIFY=ns-duplicate only class 5 (test/support/classify.ts). */
+const classifyValue = process.env['CLASSIFY'] ?? '';
+const classifyMode = classifyValue !== '';
+const allowed = allowedClasses(classifyValue);
+
 const members = (text: string): string[] => (text.startsWith('[') ? text.slice(1, -1).split(',').sort() : [text]);
 
 function record(
@@ -66,7 +79,8 @@ function record(
     what: string,
     expected: string,
     actual: string,
-    special: (text: string) => boolean
+    special: (text: string) => boolean,
+    interned?: () => string
 ): void {
     let kind: Kind = 'result';
     const a = expected.startsWith('ERR');
@@ -77,6 +91,15 @@ function record(
     else if (!a && !b && members(expected).join() === members(actual).join()) kind = 'order';
     else if (special(expected) || special(actual)) kind = 'mixed';
     const key = `${scenario}/${kind}`;
+    if (kind === 'result' || kind === 'mixed' || kind === 'order') {
+        const cls = classifyDifference(scenario, what, expected, actual, interned, allowed);
+        const slot = cls ?? 'UNCLASSIFIED';
+        classes.set(slot, (classes.get(slot) ?? 0) + 1);
+        if (cls === null && unclassified.length < 8)
+            unclassified.push(
+                `${scenario}/${kind}: ${what}\n     upstream:  ${expected.slice(0, 140)}\n     candidate: ${actual.slice(0, 140)}`
+            );
+    }
     tally.set(key, (tally.get(key) ?? 0) + 1);
     if (kind !== 'equal' && !samples.has(key))
         samples.set(key, `${what}\n     upstream:  ${expected.slice(0, 140)}\n     candidate: ${actual.slice(0, 140)}`);
@@ -101,7 +124,14 @@ function compareQueries(
             if (node === undefined) continue;
             const expected = attempt(() => upstream.select(query, node), index);
             const actual = attempt(() => candidate.select(query, node), index);
-            record(scenario, query, expected, actual, (text) => special(text) || node.nodeType === 2);
+            record(
+                scenario,
+                query,
+                expected,
+                actual,
+                (text) => special(text) || node.nodeType === 2,
+                () => attempt(() => interned.select(query, node), index)
+            );
         }
     }
 }
@@ -231,8 +261,15 @@ const tolerated = new Set((process.env['TOLERATE'] ?? '').split(','));
 let failures = 0;
 for (const scenario of SCENARIOS) {
     console.log(`| ${scenario} | ${KINDS.map((kind) => tally.get(`${scenario}/${kind}`) ?? 0).join(' | ')} |`);
+    if (classifyMode) continue;
     for (const kind of ['result', 'mixed', 'order'] as const)
         if (!tolerated.has(kind)) failures += tally.get(`${scenario}/${kind}`) ?? 0;
+}
+if (classifyMode) {
+    for (const cls of DOCUMENTED) console.log(`documented  ${String(classes.get(cls) ?? 0).padStart(8)}  ${cls}`);
+    console.log(`UNCLASSIFIED ${String(classes.get('UNCLASSIFIED') ?? 0).padStart(7)}`);
+    for (const sample of unclassified) console.log(`  ${sample}`);
+    failures = classes.get('UNCLASSIFIED') ?? 0;
 }
 if (process.env['SAMPLES'] !== undefined) for (const [key, sample] of samples) console.log(`  ${key}: ${sample}`);
 process.exitCode = failures === 0 ? 0 : 1;

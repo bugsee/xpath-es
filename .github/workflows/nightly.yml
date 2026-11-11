@@ -9,12 +9,23 @@ permissions:
   contents: read
 
 jobs:
-  fuzz:
+  # The engine in src/ (CANDIDATE) against upstream xpath. The seed changes every day so that each run covers new
+  # documents; it is printed for reproduction.
+  gated:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        dom: [xmldom08, xmldom09, xmldom06, jsdom, happy, linkedom]
+        include:
+          # xmldom 0.8: equal to upstream except for class 5 (the namespace axis over duplicate contexts).
+          - { dom: xmldom08, candidate: ./src/index.ts, classify: ns-duplicate }
+          - { dom: xmldom08, candidate: ./test/support/candidate-slow.ts, classify: ns-duplicate }
+          # xmldom 0.9: the split gate (all documented classes).
+          - { dom: xmldom09, candidate: ./src/index.ts, classify: all }
+          - { dom: xmldom09, candidate: ./test/support/candidate-slow.ts, classify: all }
+    env:
+      CANDIDATE: ${{ matrix.candidate }}
+      CLASSIFY: ${{ matrix.classify }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -22,16 +33,57 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      # The seed changes every day, so that the nightly runs cover new documents; it is printed for reproduction.
       - name: Random documents, all scenarios, whole corpus
         run: |
           seed="$(date +%Y%m%d)"
           echo "seed $seed"
-          node test/fuzz.ts ${{ matrix.dom }} 2000 "$seed" all
+          node test/fuzz.ts ${{ matrix.dom }} 4000 "$seed" all
       - name: Random expressions
         run: |
           seed="$(date +%Y%m%d)"
           node test/fuzz-expr.ts ${{ matrix.dom }} 300 100 "$seed" ns 5000
+
+  # The other DOMs do not gate: upstream delegates ordering to their compareDocumentPosition and inherits its defects
+  # (linkedom, happy-dom, jsdom), or leaves parentNode set on removed nodes (xmldom 0.6); the engine returns true
+  # document order and throws XPathOrderError for node-sets of several trees. The run reports the differences and fails
+  # only on a crash.
+  comparison:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dom: [xmldom06, jsdom, happy, linkedom]
+    env:
+      CANDIDATE: ./src/index.ts
+      TOLERATE: result,mixed,order
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Random documents, all scenarios, whole corpus (report)
+        run: |
+          seed="$(date +%Y%m%d)"
+          echo "seed $seed"
+          node test/fuzz.ts ${{ matrix.dom }} 1000 "$seed" all
+      - name: Random expressions (report)
+        run: |
+          seed="$(date +%Y%m%d)"
+          node test/fuzz-expr.ts ${{ matrix.dom }} 150 100 "$seed" ns 5000
+
+  # The bugsee/xpath fork (the production fix today), judged the way it always was.
+  fork:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node test/fuzz.ts xmldom08 2000 "$(date +%Y%m%d)" all
 
   hostile-and-e2e:
     runs-on: ubuntu-latest
@@ -43,7 +95,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node test/mutation.ts
+      - run: CANDIDATE=./src/index.ts HOSTILE_STRICT=1 node test/hostile.ts
       - run: npm run test:hostile
       - run: npm run fixtures
       - name: samlify and xml-crypto with the candidate in shadow mode
-        run: node bench/e2e.ts 20
+        run: CANDIDATE=./src/index.ts node bench/e2e.ts 20

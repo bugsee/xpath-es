@@ -7,6 +7,8 @@
 //
 //   node test/fuzz-expr.ts <dom> <documents> <expressions per document> [seed] [ns] [limit ms]
 //   TOLERATE=order,mixed lets those kinds of difference through, for a DOM known to differ
+//   CLASSIFY=all|ns-duplicate  the split gate: differences in the documented classes (see test/fuzz.ts) are counted
+//   apart and do not fail the run; every other difference does
 
 import { Worker } from 'node:worker_threads';
 import { isReport } from './fuzz-expr-worker.ts';
@@ -22,12 +24,13 @@ const random = makeRandom(Number(process.argv[5] ?? 4242));
 const nextExpression = makeExpressionGenerator(random, { namespaceAxis: process.argv[6] === 'ns' });
 const limit = Number(process.argv[7] ?? 5000);
 
-const tally: Record<Kind, number> = { equal: 0, message: 0, order: 0, mixed: 0, result: 0 };
+const tally: Record<Kind, number> = { equal: 0, message: 0, order: 0, mixed: 0, result: 0, documented: 0 };
 const shapes = { 'node-set': 0, scalar: 0, error: 0 };
 const samples = new Map<string, string>();
 const slow = { upstream: 0, candidate: 0 };
 const slowSamples: string[] = [];
 let compared = 0;
+let unparsable = 0;
 
 /** Runs one batch; resolves with the index of the expression that timed out, or -1 when the batch finished. */
 function runBatch(job: Job): Promise<number> {
@@ -46,6 +49,11 @@ function runBatch(job: Job): Promise<number> {
         worker.on('message', (message: unknown) => {
             if (!isReport(message)) return;
             clearTimeout(timer);
+            if (message.type === 'unparsable') {
+                unparsable++;
+                void worker.terminate().then(() => resolve(-1));
+                return;
+            }
             if (message.type === 'batch-done') {
                 void worker.terminate().then(() => resolve(-1));
                 return;
@@ -79,12 +87,9 @@ for (let d = 0; d < documents; d++) {
     generated += expressions.length;
     const picks: readonly [number, number] = [random(), random()];
     while (expressions.length > 0) {
-        let stoppedAt: number;
-        try {
-            stoppedAt = await runBatch({ dom: domName, xml, expressions, picks });
-        } catch {
-            break; // the document did not parse in the worker
-        }
+        // A worker that fails for any reason but an unparsable document (the oracle or the candidate cannot be loaded,
+        // an exception outside an evaluation) rejects here and fails the whole run.
+        const stoppedAt = await runBatch({ dom: domName, xml, expressions, picks });
         if (stoppedAt < 0) break;
         expressions = expressions.slice(stoppedAt + 1);
     }
@@ -95,15 +100,16 @@ console.log(
 );
 console.log(`upstream gave ${shapes['node-set']} node-sets, ${shapes.scalar} scalars, ${shapes.error} errors`);
 console.log(
-    `equal ${tally.equal}; differences: result ${tally.result}, mixed-kind sets ${tally.mixed}, order-only ${tally.order}, error-message-only ${tally.message}`
+    `equal ${tally.equal}; differences: result ${tally.result}, mixed-kind sets ${tally.mixed}, order-only ${tally.order}, error-message-only ${tally.message}, documented classes ${tally.documented}`
 );
 for (const sample of slowSamples) console.log(`  slow ${sample.slice(0, 200)}`);
 for (const [expression, sample] of samples) console.log(`  ${expression}\n     ${sample}`);
 const tolerated = new Set((process.env['TOLERATE'] ?? '').split(','));
-process.exitCode =
+// A run that compared nothing proves nothing.
+const comparedNothing = compared === 0 && documents > 0 && perDocument > 0;
+if (comparedNothing) console.log(`no expression was compared (${unparsable} of ${documents} documents did not parse)`);
+const differences =
     (tolerated.has('result') ? 0 : tally.result) +
-        (tolerated.has('mixed') ? 0 : tally.mixed) +
-        (tolerated.has('order') ? 0 : tally.order) ===
-    0
-        ? 0
-        : 1;
+    (tolerated.has('mixed') ? 0 : tally.mixed) +
+    (tolerated.has('order') ? 0 : tally.order);
+process.exitCode = comparedNothing || differences > 0 ? 1 : 0;

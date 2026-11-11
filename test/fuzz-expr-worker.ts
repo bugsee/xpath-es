@@ -4,9 +4,12 @@
 
 import { parentPort } from 'node:worker_threads';
 import { allNodes, describe, errorText, isDomName, loadCandidate, loadDom, loadOracle } from './harness.ts';
+import { allowedClasses, classifyDifference } from './support/classify.ts';
 import type { DomNode } from './support/dom.ts';
+import { loadInternedOracle } from './support/interned-oracle.ts';
 
-export type Kind = 'equal' | 'message' | 'order' | 'mixed' | 'result';
+/** `documented`: a difference in a documented class (CLASSIFY, see the README); it does not fail the run. */
+export type Kind = 'equal' | 'message' | 'order' | 'mixed' | 'result' | 'documented';
 
 export interface Job {
     readonly dom: string;
@@ -26,6 +29,8 @@ export type Report =
           readonly shapes: readonly ('node-set' | 'scalar' | 'error')[];
           readonly sample: string | null;
       }
+    /** The document does not parse in this DOM: the only failure the parent skips. Anything else must fail the run. */
+    | { readonly type: 'unparsable' }
     | { readonly type: 'batch-done' };
 
 export function isJob(value: unknown): value is Job {
@@ -48,8 +53,18 @@ const members = (text: string): string[] => (text.startsWith('[') ? text.slice(1
 function run(job: Job, send: (report: Report) => void): void {
     if (!isDomName(job.dom)) throw new Error(`unknown DOM ${job.dom}`);
     const upstream = loadOracle();
+    const interned = loadInternedOracle();
+    const classify = process.env['CLASSIFY'] ?? '';
+    const allowed = allowedClasses(classify);
     const candidate = loadCandidate();
-    const doc = loadDom(job.dom)(job.xml);
+    const parse = loadDom(job.dom);
+    let doc: DomNode;
+    try {
+        doc = parse(job.xml);
+    } catch {
+        send({ type: 'unparsable' });
+        return;
+    }
     const nodes = allNodes(doc);
     const index = new Map<unknown, number>(nodes.map((node, i) => [node, i]));
     const attributeIds = new Set<string>();
@@ -87,8 +102,20 @@ function run(job: Job, send: (report: Report) => void): void {
             else if (a && b) kind = 'message';
             else if (!a && !b && members(expected).join() === members(got).join()) kind = 'order';
             else if (special(expected) || special(got) || node.nodeType === 2) kind = 'mixed';
+            if (classify !== '' && (kind === 'result' || kind === 'mixed' || kind === 'order')) {
+                // Class 5 (both gated DOMs) and, for xmldom 0.9 (CLASSIFY=all), class 1; each only for its documented cause.
+                const documented = classifyDifference(
+                    'static',
+                    expression,
+                    expected,
+                    got,
+                    () => attempt(() => interned.select(expression, node)),
+                    allowed
+                );
+                if (documented !== null) kind = 'documented';
+            }
             kinds.push(kind);
-            if (kind !== 'equal' && kind !== 'message' && sample === null) {
+            if (kind !== 'equal' && kind !== 'message' && kind !== 'documented' && sample === null) {
                 sample = `${kind} @${node.nodeName}/${node.nodeType}\n     upstream:  ${expected.slice(0, 150)}\n     candidate: ${got.slice(0, 150)}`;
             }
         });

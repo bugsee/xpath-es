@@ -68,6 +68,76 @@ try {
         reordering.status === 1 && /\| static \| \d+ \| \d+ \| \d+ \| [1-9]\d* \|/.test(reordering.output),
         reordering.output
     );
+    // The split gate (CLASSIFY=all, xmldom 0.9): the oracle against itself has nothing to classify, and a candidate that
+    // reverses node-sets, where both engines answer, is not in any documented class.
+    const classifiedSame = run(
+        'fuzz.ts',
+        ['xmldom09', '8', '3', 'all'],
+        { CANDIDATE: 'xpath', CLASSIFY: 'all' },
+        120_000
+    );
+    check(
+        'split gate: the oracle against itself passes',
+        classifiedSame.status === 0 && /UNCLASSIFIED\s+0/.test(classifiedSame.output),
+        classifiedSame.output
+    );
+    const classifiedReordering = run(
+        'fuzz.ts',
+        ['xmldom09', '8', '3', 'all'],
+        { CANDIDATE: REORDERING, CLASSIFY: 'all' },
+        120_000
+    );
+    check(
+        'split gate: a candidate that reverses node-sets is caught',
+        classifiedReordering.status === 1 && /UNCLASSIFIED\s+[1-9]/.test(classifiedReordering.output),
+        classifiedReordering.output
+    );
+    // Class 5 only (xmldom 0.8 and the expression fuzzer): unrelated differences still fail.
+    const nsOnly = run(
+        'fuzz.ts',
+        ['xmldom08', '8', '3', 'all'],
+        { CANDIDATE: REORDERING, CLASSIFY: 'ns-duplicate' },
+        120_000
+    );
+    check(
+        'class 5 only: a candidate that reverses node-sets still fails the document fuzzer',
+        nsOnly.status === 1 && /UNCLASSIFIED\s+[1-9]/.test(nsOnly.output),
+        nsOnly.output
+    );
+    const exprReordering = run(
+        'fuzz-expr.ts',
+        ['xmldom08', '6', '40', '3', 'ns', '3000'],
+        { CANDIDATE: REORDERING, CLASSIFY: 'ns-duplicate' },
+        180_000
+    );
+    check(
+        'class 5 only: a candidate that reverses node-sets still fails the expression fuzzer',
+        exprReordering.status === 1,
+        exprReordering.output
+    );
+    const exprSame = run(
+        'fuzz-expr.ts',
+        ['xmldom08', '6', '40', '3', 'ns', '3000'],
+        { CANDIDATE: 'xpath', CLASSIFY: 'ns-duplicate' },
+        180_000
+    );
+    check(
+        'class 5 only: the oracle against itself passes the expression fuzzer',
+        exprSame.status === 0,
+        exprSame.output
+    );
+    // A worker that cannot load its candidate must fail the run, not report success after comparing nothing.
+    const brokenWorker = run(
+        'fuzz-expr.ts',
+        ['xmldom08', '3', '5', '1', 'ns', '2000'],
+        { CANDIDATE: './test/fixtures/does-not-exist.ts' },
+        120_000
+    );
+    check(
+        'expression fuzzer: a candidate that cannot be loaded fails the run',
+        brokenWorker.status !== 0,
+        brokenWorker.output
+    );
     const reorderingMutations = run('mutation.ts', [], { CANDIDATE: REORDERING }, 60_000);
     check(
         'mutation scenarios: the reversing candidate is caught too',
