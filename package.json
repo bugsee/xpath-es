@@ -40,9 +40,9 @@
     },
     "scripts": {
         "typecheck": "node node_modules/typescript-7/bin/tsc --noEmit -p tsconfig.json",
-        "lint": "oxlint --type-aware --tsconfig tsconfig.json -c .oxlintrc.json test bench",
-        "format": "oxfmt --write \"{test,bench}/**/*.ts\"",
-        "format:check": "oxfmt --check \"{test,bench}/**/*.ts\"",
+        "lint": "oxlint --type-aware --tsconfig tsconfig.json -c .oxlintrc.json src test bench",
+        "format": "oxfmt --write \"{src,test,bench}/**/*.ts\"",
+        "format:check": "oxfmt --check \"{src,test,bench}/**/*.ts\"",
         "check": "npm run typecheck && npm run lint && npm run format:check",
         "fixtures": "node bench/saml-fixtures.ts",
         "test:self": "CANDIDATE=xpath node test/fuzz.ts xmldom08 150 7 all && CANDIDATE=xpath node test/mutation.ts",
