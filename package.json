@@ -47,9 +47,10 @@
         "fixtures": "node bench/saml-fixtures.ts",
         "test:self": "CANDIDATE=xpath node test/fuzz.ts xmldom08 150 7 all && CANDIDATE=xpath node test/mutation.ts",
         "test:differential": "node test/fuzz.ts xmldom08 300 11 all && node test/mutation.ts && node test/fuzz-expr.ts xmldom08 40 60 5",
+        "test:unit": "node --test test/unit/*.test.ts",
         "test:hostile": "node test/hostile.ts",
         "test:harness": "node test/harness-selftest.ts",
-        "test": "npm run test:harness && npm run test:differential && npm run test:hostile",
+        "test": "npm run test:unit && npm run test:harness && npm run test:differential && npm run test:hostile",
         "bench:hostile": "node bench/hostile.ts",
         "bench:consumers": "node bench/consumers.ts",
         "bench:e2e": "node bench/e2e.ts"
