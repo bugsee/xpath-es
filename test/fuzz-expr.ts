@@ -30,6 +30,7 @@ const samples = new Map<string, string>();
 const slow = { upstream: 0, candidate: 0 };
 const slowSamples: string[] = [];
 let compared = 0;
+let unparsable = 0;
 
 /** Runs one batch; resolves with the index of the expression that timed out, or -1 when the batch finished. */
 function runBatch(job: Job): Promise<number> {
@@ -48,6 +49,11 @@ function runBatch(job: Job): Promise<number> {
         worker.on('message', (message: unknown) => {
             if (!isReport(message)) return;
             clearTimeout(timer);
+            if (message.type === 'unparsable') {
+                unparsable++;
+                void worker.terminate().then(() => resolve(-1));
+                return;
+            }
             if (message.type === 'batch-done') {
                 void worker.terminate().then(() => resolve(-1));
                 return;
@@ -81,12 +87,9 @@ for (let d = 0; d < documents; d++) {
     generated += expressions.length;
     const picks: readonly [number, number] = [random(), random()];
     while (expressions.length > 0) {
-        let stoppedAt: number;
-        try {
-            stoppedAt = await runBatch({ dom: domName, xml, expressions, picks });
-        } catch {
-            break; // the document did not parse in the worker
-        }
+        // A worker that fails for any reason but an unparsable document (the oracle or the candidate cannot be loaded,
+        // an exception outside an evaluation) rejects here and fails the whole run.
+        const stoppedAt = await runBatch({ dom: domName, xml, expressions, picks });
         if (stoppedAt < 0) break;
         expressions = expressions.slice(stoppedAt + 1);
     }
@@ -102,10 +105,11 @@ console.log(
 for (const sample of slowSamples) console.log(`  slow ${sample.slice(0, 200)}`);
 for (const [expression, sample] of samples) console.log(`  ${expression}\n     ${sample}`);
 const tolerated = new Set((process.env['TOLERATE'] ?? '').split(','));
-process.exitCode =
+// A run that compared nothing proves nothing.
+const comparedNothing = compared === 0 && documents > 0 && perDocument > 0;
+if (comparedNothing) console.log(`no expression was compared (${unparsable} of ${documents} documents did not parse)`);
+const differences =
     (tolerated.has('result') ? 0 : tally.result) +
-        (tolerated.has('mixed') ? 0 : tally.mixed) +
-        (tolerated.has('order') ? 0 : tally.order) ===
-    0
-        ? 0
-        : 1;
+    (tolerated.has('mixed') ? 0 : tally.mixed) +
+    (tolerated.has('order') ? 0 : tally.order);
+process.exitCode = comparedNothing || differences > 0 ? 1 : 0;

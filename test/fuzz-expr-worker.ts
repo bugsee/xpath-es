@@ -4,7 +4,7 @@
 
 import { parentPort } from 'node:worker_threads';
 import { allNodes, describe, errorText, isDomName, loadCandidate, loadDom, loadOracle } from './harness.ts';
-import { isNamespaceDuplicate } from './support/classify.ts';
+import { allowedClasses, classifyDifference } from './support/classify.ts';
 import type { DomNode } from './support/dom.ts';
 import { loadInternedOracle } from './support/interned-oracle.ts';
 
@@ -29,6 +29,8 @@ export type Report =
           readonly shapes: readonly ('node-set' | 'scalar' | 'error')[];
           readonly sample: string | null;
       }
+    /** The document does not parse in this DOM: the only failure the parent skips. Anything else must fail the run. */
+    | { readonly type: 'unparsable' }
     | { readonly type: 'batch-done' };
 
 export function isJob(value: unknown): value is Job {
@@ -53,8 +55,16 @@ function run(job: Job, send: (report: Report) => void): void {
     const upstream = loadOracle();
     const interned = loadInternedOracle();
     const classify = process.env['CLASSIFY'] ?? '';
+    const allowed = allowedClasses(classify);
     const candidate = loadCandidate();
-    const doc = loadDom(job.dom)(job.xml);
+    const parse = loadDom(job.dom);
+    let doc: DomNode;
+    try {
+        doc = parse(job.xml);
+    } catch {
+        send({ type: 'unparsable' });
+        return;
+    }
     const nodes = allNodes(doc);
     const index = new Map<unknown, number>(nodes.map((node, i) => [node, i]));
     const attributeIds = new Set<string>();
@@ -93,13 +103,16 @@ function run(job: Job, send: (report: Report) => void): void {
             else if (!a && !b && members(expected).join() === members(got).join()) kind = 'order';
             else if (special(expected) || special(got) || node.nodeType === 2) kind = 'mixed';
             if (classify !== '' && (kind === 'result' || kind === 'mixed' || kind === 'order')) {
-                // Class 5 (both DOMs that gate) and, for xmldom 0.9 (CLASSIFY=all), class 1: upstream throws on a
-                // namespace node and the engine answers.
-                const namespaceDuplicate = isNamespaceDuplicate(expression, expected, got, () =>
-                    attempt(() => interned.select(expression, node))
+                // Class 5 (both gated DOMs) and, for xmldom 0.9 (CLASSIFY=all), class 1; each only for its documented cause.
+                const documented = classifyDifference(
+                    'static',
+                    expression,
+                    expected,
+                    got,
+                    () => attempt(() => interned.select(expression, node)),
+                    allowed
                 );
-                const namespaceCrash = classify === 'all' && a && !b && expression.includes('namespace::');
-                if (namespaceDuplicate || namespaceCrash) kind = 'documented';
+                if (documented !== null) kind = 'documented';
             }
             kinds.push(kind);
             if (kind !== 'equal' && kind !== 'message' && kind !== 'documented' && sample === null) {

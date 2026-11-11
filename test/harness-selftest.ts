@@ -126,6 +126,18 @@ try {
         exprSame.status === 0,
         exprSame.output
     );
+    // A worker that cannot load its candidate must fail the run, not report success after comparing nothing.
+    const brokenWorker = run(
+        'fuzz-expr.ts',
+        ['xmldom08', '3', '5', '1', 'ns', '2000'],
+        { CANDIDATE: './test/fixtures/does-not-exist.ts' },
+        120_000
+    );
+    check(
+        'expression fuzzer: a candidate that cannot be loaded fails the run',
+        brokenWorker.status !== 0,
+        brokenWorker.output
+    );
     const reorderingMutations = run('mutation.ts', [], { CANDIDATE: REORDERING }, 60_000);
     check(
         'mutation scenarios: the reversing candidate is caught too',

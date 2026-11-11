@@ -26,7 +26,8 @@ import {
     loadOracle,
     makeRandom
 } from './harness.ts';
-import { isNamespaceDuplicate } from './support/classify.ts';
+import { allowedClasses, classifyDifference, DOCUMENTED } from './support/classify.ts';
+import type { Scenario } from './support/classify.ts';
 import { isDomNode } from './support/dom.ts';
 import { loadInternedOracle } from './support/interned-oracle.ts';
 import type { DomNode } from './support/dom.ts';
@@ -45,7 +46,6 @@ function pick<T>(items: readonly T[]): T | undefined {
     return items[Math.floor(random() * items.length)];
 }
 
-type Scenario = 'static' | 'mutated' | 'detached' | 'fragment' | 'twodocs' | 'pairs' | 'pairs-two-trees';
 type Kind = 'equal' | 'message' | 'order' | 'mixed' | 'result';
 const tally = new Map<string, number>();
 const samples = new Map<string, string>();
@@ -67,61 +67,10 @@ function attempt(run: () => unknown, index: ReadonlyMap<unknown, number>): strin
     }
 }
 
-/**
- * The documented classes of difference (CLASSIFY=all). Classes 1-4 are cases where the oracle crashes on, or returns an
- * arbitrary order for, something the DOM's own `compareDocumentPosition` cannot handle (xmldom 0.9 dereferences a null
- * parent for a detached node and for upstream's synthetic namespace nodes), or where the engine refuses a node-set
- * that spans several trees. Class 5 is the one case in which both engines answer: upstream repeats a namespace node
- * when its context is reached twice; it is verified against an oracle with interned namespace nodes (see
- * test/support/classify.ts). Any other difference in which both engines answer is never documented.
- */
-const DOCUMENTED = [
-    'namespace-nodes: upstream throws, engine answers',
-    'detached-context: upstream throws, engine answers',
-    'two-trees: engine throws XPathOrderError, upstream answers',
-    'two-trees: upstream throws, engine answers',
-    'namespace-axis: upstream repeats a namespace node for a duplicate context'
-] as const;
-const ORDER_ERROR = 'ERR Unexpected: could not determine node order';
-const NAMESPACE_DUPLICATE = DOCUMENTED[4];
-
-/** CLASSIFY=all allows every class; CLASSIFY=ns-duplicate only the last (class 5), for the DOMs that must otherwise be equal. */
+/** CLASSIFY=all allows every documented class; CLASSIFY=ns-duplicate only class 5 (test/support/classify.ts). */
 const classifyValue = process.env['CLASSIFY'] ?? '';
 const classifyMode = classifyValue !== '';
-const allowed: ReadonlySet<string> =
-    classifyValue === 'ns-duplicate' ? new Set<string>([NAMESPACE_DUPLICATE]) : new Set<string>(DOCUMENTED);
-
-function classify(
-    scenario: Scenario,
-    what: string,
-    expected: string,
-    actual: string,
-    interned: (() => string) | undefined
-): string | null {
-    const found = classifyAll(scenario, what, expected, actual, interned);
-    return found !== null && allowed.has(found) ? found : null;
-}
-
-function classifyAll(
-    scenario: Scenario,
-    what: string,
-    expected: string,
-    actual: string,
-    interned: (() => string) | undefined
-): string | null {
-    const upstreamThrows = expected.startsWith('ERR');
-    const engineThrows = actual.startsWith('ERR');
-    if (upstreamThrows === engineThrows) {
-        return interned !== undefined && isNamespaceDuplicate(what, expected, actual, interned)
-            ? NAMESPACE_DUPLICATE
-            : null;
-    }
-    const twoTrees = scenario === 'twodocs' || scenario === 'pairs-two-trees';
-    if (twoTrees) return engineThrows && actual === ORDER_ERROR ? DOCUMENTED[2] : upstreamThrows ? DOCUMENTED[3] : null;
-    if (!upstreamThrows) return null;
-    if (scenario === 'detached') return DOCUMENTED[1];
-    return what.includes('namespace::') || actual.includes('ns:') ? DOCUMENTED[0] : null;
-}
+const allowed = allowedClasses(classifyValue);
 
 const members = (text: string): string[] => (text.startsWith('[') ? text.slice(1, -1).split(',').sort() : [text]);
 
@@ -143,7 +92,7 @@ function record(
     else if (special(expected) || special(actual)) kind = 'mixed';
     const key = `${scenario}/${kind}`;
     if (kind === 'result' || kind === 'mixed' || kind === 'order') {
-        const cls = classify(scenario, what, expected, actual, interned);
+        const cls = classifyDifference(scenario, what, expected, actual, interned, allowed);
         const slot = cls ?? 'UNCLASSIFIED';
         classes.set(slot, (classes.get(slot) ?? 0) + 1);
         if (cls === null && unclassified.length < 8)

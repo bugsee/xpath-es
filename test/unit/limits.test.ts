@@ -8,6 +8,7 @@ import {
     DEFAULT_BUDGET,
     DEFAULT_TIMEOUT_MS,
     XPathBudgetError,
+    XPathContextError,
     XPathError,
     XPathProgram,
     XPathSyntaxError,
@@ -123,4 +124,30 @@ void test('stringToNumber accepts exactly what upstream’s pattern accepts, and
     assert.ok(Number.isNaN(stringToNumber(`${'0'.repeat(500_000)}x`)));
     assert.ok(Number.isNaN(stringToNumber(`${' '.repeat(500_000)}x`)));
     assert.ok(Number(process.hrtime.bigint() - start) / 1e6 < 500);
+});
+
+void test('a NaN or negative limit is refused instead of silently turning the limit off', () => {
+    const program = new XPathProgram('count(//a)');
+    const node = parse(flat(50));
+    for (const options of [{ budget: Number.NaN }, { budget: -1 }, { timeoutMs: Number.NaN }, { timeoutMs: -5 }])
+        assert.throws(() => program.run({ node, ...options }), XPathContextError, JSON.stringify(options));
+    assert.doesNotThrow(() => program.run({ node, budget: 0, timeoutMs: 0 }));
+    assert.doesNotThrow(() => program.run({ node, budget: Number.POSITIVE_INFINITY }));
+});
+
+void test('a very wide expression is parsed (no argument-spread RangeError) or refused with a typed error', () => {
+    const doc = parse('<r><a/><a/></r>');
+    for (const source of [
+        'a|'.repeat(500_000) + 'a',
+        `a${'[1]'.repeat(300_000)}`,
+        `concat(${"'a',".repeat(100_000)}'a')`
+    ]) {
+        const { value } = new XPathProgram(source).run({ node: doc.documentElement });
+        assert.ok(value !== undefined);
+    }
+});
+
+void test('local-name() with no context node is the empty string, not a sentinel name', () => {
+    for (const expression of ['local-name()', 'name()', 'namespace-uri()'])
+        assert.equal(new XPathProgram(expression).run({}).value, '', expression);
 });

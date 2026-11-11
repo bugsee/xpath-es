@@ -2,9 +2,16 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { allNodes, describe, errorText, loadDom, loadModule, loadOracle, loadXPath } from '../harness.ts';
+import { allNodes, call, describe, errorText, loadDom, loadModule, loadOracle, loadXPath } from '../harness.ts';
 import type { DomName, XPathLike } from '../harness.ts';
-import { isNamespaceDuplicate } from '../support/classify.ts';
+import {
+    allowedClasses,
+    classifyDifference,
+    DOCUMENTED,
+    DOM_COMPARE_CRASH,
+    isNamespaceDuplicate,
+    ORDER_ERROR
+} from '../support/classify.ts';
 import { loadInternedOracle } from '../support/interned-oracle.ts';
 
 const XML = '<r xmlns:p="urn:p" xmlns:q="urn:q" x="1" xmlns="urn:def1"><![CDATA[cd]]><q:e id="i2" p:z="3"></q:e></r>';
@@ -36,22 +43,65 @@ void test('the interned oracle equals the oracle except where upstream repeats a
             );
 });
 
-void test('a duplicate namespace node is classified, for a node-set and for a count()', () => {
+void test('a duplicate namespace node is classified, for a node-set and, separately, for a count()', () => {
     const interned = loadInternedOracle();
-    let seen = 0;
-    for (const dom of ['xmldom08', 'xmldom09'] as const) {
-        for (const expression of [DUPLICATING, COUNTING]) {
+    for (const expression of [DUPLICATING, COUNTING]) {
+        let explained = 0;
+        for (const dom of ['xmldom08', 'xmldom09'] as const) {
             const expected = evaluate(loadOracle(), dom, expression);
             const actual = evaluate(engine, dom, expression);
             if (expected === actual) continue;
-            seen++;
             assert.ok(
                 isNamespaceDuplicate(expression, expected, actual, () => evaluate(interned, dom, expression)),
                 `${dom} ${expression}: ${expected} vs ${actual}`
             );
+            explained++;
         }
+        assert.ok(explained > 0, `${expression}: upstream no longer differs on either DOM; the test lost its subject`);
     }
-    assert.ok(seen > 0, 'no duplicating expression differed any more: the test lost its subject');
+});
+
+void test('the interned oracle does not return a stale namespace node after the document changes', () => {
+    const interned = loadInternedOracle();
+    const doc = loadDom('xmldom08')('<w><r xmlns:p="urn:1"><a/></r><s xmlns:p="urn:2"/></w>');
+    const nodes = allNodes(doc);
+    const a = nodes.find((node) => node.nodeName === 'a');
+    const s = nodes.find((node) => node.nodeName === 's');
+    assert.ok(a && s);
+    const uris = (engineUnderTest: XPathLike): string => {
+        const result = engineUnderTest.select('namespace::p', a);
+        return Array.isArray(result) ? result.map((node) => String(Reflect.get(node, 'nodeValue'))).join() : '?';
+    };
+    assert.equal(uris(interned), 'urn:1');
+    call(s, 'appendChild', a);
+    assert.equal(uris(interned), uris(loadOracle()));
+    assert.equal(uris(interned), 'urn:2');
+});
+
+void test('only the documented upstream crash excuses a difference', () => {
+    const all = allowedClasses('all');
+    const answer = '["x"]';
+    // The documented crash is classified in its scenarios ...
+    assert.equal(classifyDifference('detached', 'foo()', DOM_COMPARE_CRASH, answer, undefined, all), DOCUMENTED[1]);
+    assert.equal(
+        classifyDifference('static', '//a/namespace::*', DOM_COMPARE_CRASH, answer, undefined, all),
+        DOCUMENTED[0]
+    );
+    assert.equal(classifyDifference('twodocs', '$a | $b', DOM_COMPARE_CRASH, answer, undefined, all), DOCUMENTED[3]);
+    assert.equal(classifyDifference('pairs-two-trees', 'pair', answer, ORDER_ERROR, undefined, all), DOCUMENTED[2]);
+    // ... any other upstream error is not: an unknown function, or a predicate that fails before the namespace step.
+    for (const scenario of ['detached', 'static', 'twodocs', 'pairs-two-trees'] as const) {
+        for (const error of ['ERR Cannot resolve QName foo', 'ERR n.getAttributeNS is not a function'])
+            assert.equal(classifyDifference(scenario, "lang('x')/namespace::*", error, answer, undefined, all), null);
+    }
+    // The engine's own errors are excused only when it is the order error on several trees.
+    assert.equal(classifyDifference('pairs-two-trees', 'pair', answer, 'ERR something else', undefined, all), null);
+    assert.equal(classifyDifference('static', '//a', answer, ORDER_ERROR, undefined, all), null);
+    // Class 5 alone allows none of the others.
+    assert.equal(
+        classifyDifference('detached', 'foo()', DOM_COMPARE_CRASH, answer, undefined, allowedClasses('ns-duplicate')),
+        null
+    );
 });
 
 void test('unrelated differences are not classified, even on an expression with a namespace axis', () => {

@@ -101,6 +101,12 @@ export class XPathProgram {
         const variableCallback =
             options.variables !== undefined && (options.callbacks?.variables ?? true) && facts.usesVariables;
         const functionCallback = options.functions !== undefined && facts.usesFunctions;
+        const budget = options.budget ?? DEFAULT_BUDGET;
+        const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+        // NaN would silently turn a limit off (every comparison with it is false), and a negative value is no limit.
+        if (!(budget >= 0) || !(timeoutMs >= 0)) {
+            throw new XPathContextError('budget and timeoutMs must be numbers of at least 0 (0 turns a limit off).');
+        }
         const state = new EvalState({
             contextNode: node,
             caseInsensitive: options.caseInsensitive ?? false,
@@ -109,8 +115,8 @@ export class XPathProgram {
             variables: options.variables ?? null,
             functions: options.functions ?? null,
             pure: !XPathProgram.forceSlowPath && !namespaceCallback && !variableCallback && !functionCallback,
-            budget: options.budget ?? DEFAULT_BUDGET,
-            timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            budget,
+            timeoutMs,
             mergeUnions: options.mergeUnions ?? true
         });
         return { value: this.#run({ node, position, size }, state), state };

@@ -14,7 +14,7 @@ import { applyDescendantPair, applyStep, compileNodeTest, filterByPredicates } f
 import type { CompiledPredicate, CompiledStep, NodeList } from './steps.ts';
 
 /** Stands in for "no context node" (upstream accepts a null node and fails only when a path needs it). */
-export const NO_NODE: DomNode = Object.freeze({ nodeType: 0, nodeName: '#none' });
+export const NO_NODE: DomNode = Object.freeze({ nodeType: 0, nodeName: '' });
 
 // ---- static analysis ----
 
@@ -403,7 +403,7 @@ export function expressionFacts(root: Expr): ExpressionFacts {
             case 'or':
             case 'and':
             case 'union':
-                pending.push(...expr.operands);
+                for (const operand of expr.operands) pending.push(operand);
                 break;
             case 'chain':
                 pending.push(expr.first);
@@ -414,17 +414,17 @@ export function expressionFacts(root: Expr): ExpressionFacts {
                 break;
             case 'path':
                 if (expr.filter !== null) pending.push(expr.filter);
-                pending.push(...expr.filterPredicates);
+                for (const predicate of expr.filterPredicates) pending.push(predicate);
                 for (const step of expr.steps) {
                     if (step.test.kind === 'prefixAny' || (step.test.kind === 'name' && step.test.prefix !== null))
                         usesPrefixes = true;
-                    pending.push(...step.predicates);
+                    for (const predicate of step.predicates) pending.push(predicate);
                 }
                 break;
             case 'call':
                 usesFunctions = true;
                 if (expr.name.includes(':')) usesPrefixes = true;
-                pending.push(...expr.args);
+                for (const arg of expr.args) pending.push(arg);
                 break;
             case 'variable':
                 usesVariables = true;

@@ -1,7 +1,8 @@
 // The oracle with one change: upstream's namespace axis makes a new XPathNamespace object on every evaluation, so a
 // context that is reached twice yields the same namespace node twice, and a node-set built from them holds
 // duplicates (upstream's own duplicate removal compares objects, and on xmldom 0.9 its ordering function cannot
-// compare synthetic nodes). Here the objects are interned per (element, prefix). Everything else is upstream's source,
+// compare synthetic nodes). Here the objects are interned per (element, prefix, declaration), so a document that is
+// changed between two evaluations never gets a stale namespace node. Everything else is upstream's source,
 // untouched.
 //
 // It exists to classify a difference rigorously: when the engine's answer equals this oracle's answer, the only thing
@@ -25,7 +26,8 @@ function __internNamespace(Constructor, pre, node, uri, owner) {
     var byPrefix = __internedNamespaces.get(owner);
     if (byPrefix === undefined) { byPrefix = new Map(); __internedNamespaces.set(owner, byPrefix); }
     var made = byPrefix.get(pre);
-    if (made === undefined) { made = new Constructor(pre, node, uri, owner); byPrefix.set(pre, made); }
+    // An entry made for another declaration (the element was reparented, or the attribute changed) is stale.
+    if (made === undefined || made.baseNode !== node || made.nodeValue !== uri) { made = new Constructor(pre, node, uri, owner); byPrefix.set(pre, made); }
     return made;
 }
 `;
