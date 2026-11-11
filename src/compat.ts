@@ -1,5 +1,5 @@
 // Drop-in entry for code written against the `xpath` package (goto100/xpath 0.0.36): the same names, the same
-// arguments, the same results. Only what the prototype needs to be measured and fuzzed against upstream is here;
+// arguments, the same results. Only what is needed to measure and fuzz the engine against upstream is here;
 // the rest of upstream's surface is not implemented.
 //
 // Typing note: upstream's declarations use lib.dom's `Node`. This entry uses the structural `DomNode`, which every
