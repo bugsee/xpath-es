@@ -68,10 +68,12 @@ function attempt(run: () => unknown, index: ReadonlyMap<unknown, number>): strin
 }
 
 /**
- * The documented classes of difference (CLASSIFY=1). All of them are cases where the oracle crashes on, or returns an
+ * The documented classes of difference (CLASSIFY=all). Classes 1-4 are cases where the oracle crashes on, or returns an
  * arbitrary order for, something the DOM's own `compareDocumentPosition` cannot handle (xmldom 0.9 dereferences a null
  * parent for a detached node and for upstream's synthetic namespace nodes), or where the engine refuses a node-set
- * that spans several trees. A difference in which both engines answer is never documented.
+ * that spans several trees. Class 5 is the one case in which both engines answer: upstream repeats a namespace node
+ * when its context is reached twice; it is verified against an oracle with interned namespace nodes (see
+ * test/support/classify.ts). Any other difference in which both engines answer is never documented.
  */
 const DOCUMENTED = [
     'namespace-nodes: upstream throws, engine answers',

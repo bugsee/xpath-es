@@ -68,7 +68,7 @@ try {
         reordering.status === 1 && /\| static \| \d+ \| \d+ \| \d+ \| [1-9]\d* \|/.test(reordering.output),
         reordering.output
     );
-    // The split gate (CLASSIFY=1, xmldom 0.9): the oracle against itself has nothing to classify, and a candidate that
+    // The split gate (CLASSIFY=all, xmldom 0.9): the oracle against itself has nothing to classify, and a candidate that
     // reverses node-sets, where both engines answer, is not in any documented class.
     const classifiedSame = run(
         'fuzz.ts',
