@@ -24,15 +24,30 @@ This repository holds four things:
 4. **An archival prototype** (`prototype/`): the snapshot the engine grew from. It is not wired into the checks (see
    `prototype/README.md`).
 
-### Where the engine deliberately differs from upstream
+### What gates, and where the engine deliberately differs from upstream
 
-- On DOMs whose `compareDocumentPosition` is not a document order (linkedom) or differs on attributes and namespace
-  nodes (happy-dom, jsdom, xmldom 0.9), upstream delegates ordering to the DOM and inherits its defects; the engine
-  numbers the tree itself and returns true document order. The differential harness reports these as differences;
-  they are expected on those DOMs. The gate is `@xmldom/xmldom` 0.8 (what the SAML libraries use) and xmldom 0.6.
-- A node-set that spans several trees (or a context in a subtree removed from an xmldom 0.6 document, whose
-  `parentNode` still points into the old tree) throws `XPathOrderError`; upstream returns an arbitrary order on some
-  DOMs.
+| DOM | Status | Gate |
+|---|---|---|
+| `@xmldom/xmldom` 0.8 (what the SAML libraries use) | **gated** | zero differences from upstream, in every scenario and for random expressions |
+| `@xmldom/xmldom` 0.9 | **gated, split** | `CLASSIFY=1`: no difference where upstream answers and the engine answers; every other difference must fall in a documented class, and an unclassified difference fails |
+| xmldom 0.6, jsdom, happy-dom, linkedom | compared, **not gating** | the nightly run reports the differences; it fails only on a crash |
+
+The documented classes (xmldom 0.9):
+
+- **namespace nodes** and **a context inside a removed subtree**: upstream throws
+  (`Cannot read properties of null (reading 'childNodes')`), because it orders nodes with the DOM's own
+  `compareDocumentPosition`, which xmldom 0.9 cannot evaluate for a detached node or for upstream's synthetic namespace
+  nodes. The engine numbers the tree itself and answers.
+- **a node-set spanning several trees**: upstream returns an arbitrary order; the engine throws `XPathOrderError`
+  (a safe failure).
+
+Why the other DOMs do not gate: upstream delegates ordering to the DOM there and inherits its defects (linkedom's
+`compareDocumentPosition` is not a document order, happy-dom and jsdom misorder or drop attributes), and xmldom 0.6
+leaves `parentNode` set on a removed node. The engine returns true document order, and throws `XPathOrderError` for
+node-sets of several trees and for a context in a removed xmldom 0.6 subtree.
+
+Other deliberate differences:
+
 - Error *messages* differ where upstream throws an accidental `TypeError`; the engine throws typed errors.
 - Every evaluation has a work budget (`DEFAULT_BUDGET`) and a time limit (`DEFAULT_TIMEOUT_MS`); both can be changed
   per evaluation (`budget`, `timeoutMs`; `0` turns one off).
@@ -73,7 +88,7 @@ CANDIDATE=xpath node test/mutation.ts        # the oracle against itself: must s
 
 | script | what it does |
 |---|---|
-| `test/fuzz.ts <dom> <documents> [seed] [fuzz\|all]` | random documents and the scenarios static, mutated, detached, fragment, two documents, pair ordering; `all` adds the whole corpus. Fails on any difference in members, order or attribute/namespace nodes (`TOLERATE=order,mixed` lets kinds through) |
+| `test/fuzz.ts <dom> <documents> [seed] [fuzz\|all]` | random documents and the scenarios static, mutated, detached, fragment, two documents, pair ordering; `all` adds the whole corpus. Fails on any difference in members, order or attribute/namespace nodes (`TOLERATE=order,mixed` lets kinds through; `CLASSIFY=1` is the split gate for xmldom 0.9, above) |
 | `test/fuzz-expr.ts <dom> <documents> <expressions> [seed] [ns] [limit ms]` | random expressions from a grammar on random documents; an evaluation that does not return in time is counted, with the engine that was running |
 | `test/mutation.ts` | the document changes while a result is held, or while an expression is being evaluated by a custom function |
 | `test/hostile.ts` | the hostile gate, below |

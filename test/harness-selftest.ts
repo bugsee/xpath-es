@@ -68,6 +68,30 @@ try {
         reordering.status === 1 && /\| static \| \d+ \| \d+ \| \d+ \| [1-9]\d* \|/.test(reordering.output),
         reordering.output
     );
+    // The split gate (CLASSIFY=1, xmldom 0.9): the oracle against itself has nothing to classify, and a candidate that
+    // reverses node-sets, where both engines answer, is not in any documented class.
+    const classifiedSame = run(
+        'fuzz.ts',
+        ['xmldom09', '8', '3', 'all'],
+        { CANDIDATE: 'xpath', CLASSIFY: '1' },
+        120_000
+    );
+    check(
+        'split gate: the oracle against itself passes',
+        classifiedSame.status === 0 && /UNCLASSIFIED\s+0/.test(classifiedSame.output),
+        classifiedSame.output
+    );
+    const classifiedReordering = run(
+        'fuzz.ts',
+        ['xmldom09', '8', '3', 'all'],
+        { CANDIDATE: REORDERING, CLASSIFY: '1' },
+        120_000
+    );
+    check(
+        'split gate: a candidate that reverses node-sets is caught',
+        classifiedReordering.status === 1 && /UNCLASSIFIED\s+[1-9]/.test(classifiedReordering.output),
+        classifiedReordering.output
+    );
     const reorderingMutations = run('mutation.ts', [], { CANDIDATE: REORDERING }, 60_000);
     check(
         'mutation scenarios: the reversing candidate is caught too',

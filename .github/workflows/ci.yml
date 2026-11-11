@@ -65,9 +65,13 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      # The engine in src/ against upstream xpath on the DOMs it must equal (xmldom 0.8, the one the SAML libraries use,
-      # and 0.6 apart from removed subtrees); the other DOMs differ by design, see the README.
+      # Gated: xmldom 0.8 (what the SAML libraries use) with zero differences, and xmldom 0.9 with the split gate
+      # (CLASSIFY: no difference where both engines answer; the rest must fall in the documented classes). The other
+      # DOMs are compared in the nightly run and do not gate; see the README.
       - run: node test/fuzz.ts xmldom08 300 31 all
+      - run: CLASSIFY=1 node test/fuzz.ts xmldom09 300 31 all
+      - run: CANDIDATE=./test/support/candidate-slow.ts node test/fuzz.ts xmldom08 150 32 all
       - run: node test/mutation.ts
       - run: node test/fuzz-expr.ts xmldom08 60 100 31 ns 5000
+      - run: node test/fuzz-expr.ts xmldom09 60 100 31 ns 5000
       - run: HOSTILE_STRICT=1 node test/hostile.ts

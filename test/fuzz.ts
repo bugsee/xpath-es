@@ -7,6 +7,8 @@
 //
 //   node test/fuzz.ts <dom> <documents> [seed] [corpus: fuzz|all]
 //   SAMPLES=1 node test/fuzz.ts ...        print one example of each kind of difference
+//   CLASSIFY=1 node test/fuzz.ts ...       the split gate (xmldom 0.9): a difference is allowed only when it falls in
+//                                          one of the documented classes below; anything else fails the run
 //   TOLERATE=order node test/fuzz.ts ...   do not fail on the listed kinds
 
 import { CORPUS, FUZZ_QUERIES } from './corpus.ts';
@@ -43,6 +45,9 @@ type Scenario = 'static' | 'mutated' | 'detached' | 'fragment' | 'twodocs' | 'pa
 type Kind = 'equal' | 'message' | 'order' | 'mixed' | 'result';
 const tally = new Map<string, number>();
 const samples = new Map<string, string>();
+const classes = new Map<string, number>();
+const unclassified: string[] = [];
+const classifyMode = (process.env['CLASSIFY'] ?? '') !== '';
 let upstreamThrows = 0;
 
 function indexOf(roots: readonly DomNode[]): Map<unknown, number> {
@@ -57,6 +62,31 @@ function attempt(run: () => unknown, index: ReadonlyMap<unknown, number>): strin
     } catch (error) {
         return `ERR ${errorText(error)}`;
     }
+}
+
+/**
+ * The documented classes of difference (CLASSIFY=1). All of them are cases where the oracle crashes on, or returns an
+ * arbitrary order for, something the DOM's own `compareDocumentPosition` cannot handle (xmldom 0.9 dereferences a null
+ * parent for a detached node and for upstream's synthetic namespace nodes), or where the engine refuses a node-set
+ * that spans several trees. A difference in which both engines answer is never documented.
+ */
+const DOCUMENTED = [
+    'namespace-nodes: upstream throws, engine answers',
+    'detached-context: upstream throws, engine answers',
+    'two-trees: engine throws XPathOrderError, upstream answers',
+    'two-trees: upstream throws, engine answers'
+] as const;
+const ORDER_ERROR = 'ERR Unexpected: could not determine node order';
+
+function classify(scenario: Scenario, what: string, expected: string, actual: string): string | null {
+    const upstreamThrows = expected.startsWith('ERR');
+    const engineThrows = actual.startsWith('ERR');
+    if (upstreamThrows === engineThrows) return null;
+    const twoTrees = scenario === 'twodocs' || scenario === 'pairs-two-trees';
+    if (twoTrees) return engineThrows && actual === ORDER_ERROR ? DOCUMENTED[2] : upstreamThrows ? DOCUMENTED[3] : null;
+    if (!upstreamThrows) return null;
+    if (scenario === 'detached') return DOCUMENTED[1];
+    return what.includes('namespace::') || actual.includes('ns:') ? DOCUMENTED[0] : null;
 }
 
 const members = (text: string): string[] => (text.startsWith('[') ? text.slice(1, -1).split(',').sort() : [text]);
@@ -77,6 +107,15 @@ function record(
     else if (!a && !b && members(expected).join() === members(actual).join()) kind = 'order';
     else if (special(expected) || special(actual)) kind = 'mixed';
     const key = `${scenario}/${kind}`;
+    if (kind === 'result' || kind === 'mixed' || kind === 'order') {
+        const cls = classify(scenario, what, expected, actual);
+        const slot = cls ?? 'UNCLASSIFIED';
+        classes.set(slot, (classes.get(slot) ?? 0) + 1);
+        if (cls === null && unclassified.length < 8)
+            unclassified.push(
+                `${scenario}/${kind}: ${what}\n     upstream:  ${expected.slice(0, 140)}\n     candidate: ${actual.slice(0, 140)}`
+            );
+    }
     tally.set(key, (tally.get(key) ?? 0) + 1);
     if (kind !== 'equal' && !samples.has(key))
         samples.set(key, `${what}\n     upstream:  ${expected.slice(0, 140)}\n     candidate: ${actual.slice(0, 140)}`);
@@ -231,8 +270,15 @@ const tolerated = new Set((process.env['TOLERATE'] ?? '').split(','));
 let failures = 0;
 for (const scenario of SCENARIOS) {
     console.log(`| ${scenario} | ${KINDS.map((kind) => tally.get(`${scenario}/${kind}`) ?? 0).join(' | ')} |`);
+    if (classifyMode) continue;
     for (const kind of ['result', 'mixed', 'order'] as const)
         if (!tolerated.has(kind)) failures += tally.get(`${scenario}/${kind}`) ?? 0;
+}
+if (classifyMode) {
+    for (const cls of DOCUMENTED) console.log(`documented  ${String(classes.get(cls) ?? 0).padStart(8)}  ${cls}`);
+    console.log(`UNCLASSIFIED ${String(classes.get('UNCLASSIFIED') ?? 0).padStart(7)}`);
+    for (const sample of unclassified) console.log(`  ${sample}`);
+    failures = classes.get('UNCLASSIFIED') ?? 0;
 }
 if (process.env['SAMPLES'] !== undefined) for (const [key, sample] of samples) console.log(`  ${key}: ${sample}`);
 process.exitCode = failures === 0 ? 0 : 1;
