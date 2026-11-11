@@ -8,27 +8,45 @@ quadratic. Nothing here is published, and the API is not stable.
 
 ## Status
 
-This repository currently holds three things:
+This repository holds four things:
 
-1. **A differential harness** (`test/`) that compares any candidate XPath engine with upstream `xpath` 0.0.36, the
+1. **The engine** (`src/`, TypeScript, strict, no `any`): a lexer, a parser to an immutable AST, a closure compiler
+   and an interpreter, node-sets as sorted arrays with a one-pass document-order numbering, lazy axes, a work budget and
+   a wall-clock limit on every evaluation, typed errors (`XPathError` and its subclasses), and `compat.ts`, an entry
+   with upstream `xpath`'s API (`select`, `select1`, `parse`, `evaluate`, `useNamespaces`, the value classes and the
+   `is*` guards). `src/index.ts` exports both. **It is not published and not yet adopted by anything**; the API is not
+   stable.
+2. **A differential harness** (`test/`) that compares any candidate XPath engine with upstream `xpath` 0.0.36, the
    oracle: random documents, a grammar-based expression fuzzer, mutation scenarios, and a corpus of the expressions
    real XML-signature and SAML libraries evaluate.
-2. **A hostile-document suite** (`test/hostile.ts`, `bench/`) that runs shapes which make a naive engine superlinear
+3. **A hostile-document suite** (`test/hostile.ts`, `bench/`) that runs shapes which make a naive engine superlinear
    and fails a candidate that is too slow or gives a different answer.
-3. **An archival prototype** (`prototype/`): a snapshot of a measured prototype of the engine's hot paths. It is not
-   wired into the checks, and its scripts are not runnable from here as they are (see `prototype/README.md`). The
-   engine itself is meant to grow from it, into `src/`.
+4. **An archival prototype** (`prototype/`): the snapshot the engine grew from. It is not wired into the checks (see
+   `prototype/README.md`).
 
-There is no engine in `src/` yet. The harness judges the [bugsee/xpath](https://github.com/bugsee/xpath) fork of
-`xpath` today.
+### Where the engine deliberately differs from upstream
+
+- On DOMs whose `compareDocumentPosition` is not a document order (linkedom) or differs on attributes and namespace
+  nodes (happy-dom, jsdom, xmldom 0.9), upstream delegates ordering to the DOM and inherits its defects; the engine
+  numbers the tree itself and returns true document order. The differential harness reports these as differences;
+  they are expected on those DOMs. The gate is `@xmldom/xmldom` 0.8 (what the SAML libraries use) and xmldom 0.6.
+- A node-set that spans several trees (or a context in a subtree removed from an xmldom 0.6 document, whose
+  `parentNode` still points into the old tree) throws `XPathOrderError`; upstream returns an arbitrary order on some
+  DOMs.
+- Error *messages* differ where upstream throws an accidental `TypeError`; the engine throws typed errors.
+- Every evaluation has a work budget (`DEFAULT_BUDGET`) and a time limit (`DEFAULT_TIMEOUT_MS`); both can be changed
+  per evaluation (`budget`, `timeoutMs`; `0` turns one off).
 
 ## Running it
 
-Node >= 22.18 (the TypeScript sources run directly, by type stripping; there is no build).
+Node >= 22.18 (the TypeScript sources run directly, by type stripping; `npm run build` makes `dist/esm` and
+`dist/cjs`).
 
 ```sh
 npm ci
 npm run check            # tsc (TypeScript 7, every strict flag), oxlint (type-aware), oxfmt --check
+npm run test:unit        # unit tests of the engine (node:test)
+npm run build            # dist/esm and dist/cjs, same compiler and strict options
 npm run test:harness     # the harness tests itself on candidates whose verdict is known
 npm run test:differential
 npm run test:hostile
@@ -42,8 +60,9 @@ npm run bench:e2e        # samlify + xml-crypto, with the candidate swapped in f
 
 `CANDIDATE` names the engine under test: a package name resolved from `node_modules`, or a path (starting with `.`
 or absolute) to a CommonJS or ES module that exports the legacy `xpath` API (`select`, `select1`,
-`selectWithResolver`, `parse(...)`, `evaluate`, `XNodeSet`). The default is `xpath-fork`, the
-[bugsee/xpath](https://github.com/bugsee/xpath) release tarball, which is a dev dependency.
+`selectWithResolver`, `parse(...)`, `evaluate`, `XNodeSet`). `CANDIDATE=./src/index.ts` judges this engine, and
+`CANDIDATE=./test/support/candidate-slow.ts` the same engine with its fast paths switched off. The default is
+`xpath-fork`, the [bugsee/xpath](https://github.com/bugsee/xpath) release tarball, which is a dev dependency.
 
 ```sh
 CANDIDATE=./path/to/engine.js node test/fuzz.ts xmldom08 300 1 all
@@ -76,11 +95,6 @@ names). A listed case that is too slow does not fail the run and is reported; on
 so the baseline can shrink when that is stable. A wrong result or an error is never baselined. With no baseline file, or
 `HOSTILE_STRICT=1`, a candidate is judged strictly. `baselines/xpath-fork.json` records what the fork is known to
 be slow on.
-
-## Not here yet
-
-Engine-internal switches the prototype had (for example forcing every fast path off) belong to the engine phase and
-are not part of the harness.
 
 ## Licence, credits and references
 
