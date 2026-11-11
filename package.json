@@ -61,7 +61,7 @@
         "happy-dom": "21.0.4",
         "jsdom": "31.0.0",
         "linkedom": "0.18.15",
-        "node-forge": "1.4.0",
+        "node-forge": "1.4.3",
         "oxfmt": "0.75.0",
         "oxlint": "1.90.0",
         "oxlint-tsgolint": "7.0.2005",
