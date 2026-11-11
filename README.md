@@ -21,8 +21,6 @@ This repository holds four things:
    real XML-signature and SAML libraries evaluate.
 3. **A hostile-document suite** (`test/hostile.ts`, `bench/`) that runs shapes which make a naive engine superlinear
    and fails a candidate that is too slow or gives a different answer.
-4. **An archival prototype** (`prototype/`): the snapshot the engine grew from. It is not wired into the checks (see
-   `prototype/README.md`).
 
 ### What gates, and where the engine deliberately differs from upstream
 
