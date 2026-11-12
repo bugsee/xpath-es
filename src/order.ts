@@ -46,6 +46,40 @@ export class Numbering {
         return this.#root;
     }
 
+    /** The number of a tree node (an element, text, comment, ...; not an attribute or a namespace node), else undefined. */
+    rankOf(node: DomNode): number | undefined {
+        return this.#index.get(node);
+    }
+
+    /** The tree node with this number. */
+    nodeAt(rank: number): DomNode | undefined {
+        return this.#byIndex[rank];
+    }
+
+    #ends: Int32Array | null = null;
+
+    /**
+     * For each number, the number of the last node of that node's subtree (a leaf's own number): a node `x` contains the
+     * node numbered `r` exactly when x's number < r <= `ends[x]`. Built once, in one pass over the numbered nodes.
+     */
+    get ends(): Int32Array {
+        let ends = this.#ends;
+        if (ends === null) {
+            const total = this.#byIndex.length;
+            ends = new Int32Array(total);
+            for (let at = 0; at < total; at++) ends[at] = at;
+            // A node's number is larger than its parent's, so one pass downwards pushes every end up to the parent.
+            for (let at = total - 1; at > 0; at--) {
+                const parent = this.#byIndex[at]?.parentNode;
+                const up = parent == null ? undefined : this.#index.get(parent);
+                const here = ends[at];
+                if (up !== undefined && here !== undefined && (ends[up] ?? 0) < here) ends[up] = here;
+            }
+            this.#ends = ends;
+        }
+        return ends;
+    }
+
     #keyOf(node: DomNode): number | undefined {
         const own = this.#index.get(node);
         if (own !== undefined) return own;

@@ -1,0 +1,15 @@
+{
+    "note": "plain-DOM answers under XPath 1.0 where strict mode differs from upstream by design",
+    "cases": {
+        "8k siblings, preceding of all": {
+            "digest": "2001b0e5ed90",
+            "size": 8189,
+            "source": "reference"
+        },
+        "root with 3,000 namespace declarations, 20k children": {
+            "digest": "542ec305a961",
+            "size": 20000,
+            "source": "reference"
+        }
+    }
+}

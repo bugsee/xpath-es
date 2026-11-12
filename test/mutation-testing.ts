@@ -23,6 +23,42 @@ interface Mutant {
 
 const MUTANTS: readonly Mutant[] = [
     {
+        name: 'strict following[k]: the k-th match is one too far',
+        file: 'src/ranked.ts',
+        find: 'const position = k === null ? matches.length - 1 : above + k - 1;',
+        replace: 'const position = k === null ? matches.length - 1 : above + k;'
+    },
+    {
+        name: 'strict following: the subtree of a tree node is not skipped (its descendants follow it)',
+        file: 'src/ranked.ts',
+        find: 'const threshold = isTree[c] === true ? (ends[rank] ?? rank) : rank;',
+        replace: 'const threshold = rank;'
+    },
+    {
+        name: 'strict preceding[k]: the matching ancestors are not counted past',
+        file: 'src/ranked.ts',
+        find: 'if ((ancestorPositions[middle] ?? 0) - middle <= far) low = middle + 1;',
+        replace: 'if ((ancestorPositions[middle] ?? 0) - middle < far) low = middle + 1;'
+    },
+    {
+        name: 'strict preceding[k]: an ancestor stays on the stack for a context outside its subtree',
+        file: 'src/ranked.ts',
+        find: 'if (top < rank && (ends[top] ?? top) >= rank) break;',
+        replace: 'if (top < rank) break;'
+    },
+    {
+        name: 'strict preceding of a node-set: the ancestors of the last context are not excluded',
+        file: 'src/ranked.ts',
+        find: 'if (node !== undefined && !ancestors.has(node)) visit(node);',
+        replace: 'if (node !== undefined) visit(node);'
+    },
+    {
+        name: 'strict preceding of a node-set: the last context is taken by position in the list, not in the document',
+        file: 'src/ranked.ts',
+        find: 'if (rank > last) {',
+        replace: 'if (lastNode === null) {'
+    },
+    {
         name: 'id(node-set) serialises with no charge and no length cap',
         file: 'src/functions.ts',
         find: 'function serialisedIds(set: NodeSet, state: EvalState): string {',
@@ -103,9 +139,11 @@ const NETS: readonly { readonly name: string; readonly command: readonly string[
             'test/unit/strict-spec.test.ts',
             'test/unit/review-limits.test.ts',
             'test/unit/resolvers.test.ts',
-            'test/unit/axes.test.ts'
+            'test/unit/axes.test.ts',
+            'test/unit/strict-axes.test.ts'
         ]
     },
+    { name: 'strict axes fuzz', command: ['test/strict-axes-fuzz.ts', '12', '60', '5'] },
     { name: 'mutation scenarios', command: ['test/mutation.ts'] },
     { name: 'differential (xmldom 0.8)', command: ['test/fuzz.ts', 'xmldom08', '40', '5', 'all'] }
 ];

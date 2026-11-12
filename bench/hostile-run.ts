@@ -37,10 +37,11 @@ export function measureOne(engine: EngineName, at: number): Measurement {
     if (item === undefined) throw new Error(`no case ${at}`);
     const doc = loadDom('xmldom08')(item.xml());
     const select =
-        engine === 'reference'
+        engine === 'reference' || engine === 'strict-reference'
             ? (): unknown => {
-                  if (item.reference === undefined) throw new Error(`case ${at} has no reference answer`);
-                  return item.reference(doc);
+                  const reference = engine === 'reference' ? item.reference : item.strictReference;
+                  if (reference === undefined) throw new Error(`case ${at} has no ${engine} answer`);
+                  return reference(doc);
               }
             : (
                   (load) => (): unknown =>

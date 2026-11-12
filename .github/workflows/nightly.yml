@@ -96,6 +96,8 @@ jobs:
       - run: node test/mutation.ts
       - run: CANDIDATE=./src/index.ts HOSTILE_ENGINE_CASES=1 HOSTILE_STRICT=1 node test/hostile.ts
       - run: node test/mode-agreement.ts 200 150 "$(date +%Y%m%d)"
+      - run: node test/strict-axes-fuzz.ts 150 150 "$(date +%Y%m%d)" xmldom08
+      - run: node test/strict-axes-fuzz.ts 100 150 "$(date +%Y%m%d)" xmldom09
       - run: npm run test:hostile
       - run: npm run fixtures
       - name: samlify and xml-crypto with the candidate in shadow mode

@@ -26,6 +26,12 @@ export interface Case {
      * wherever the oracle does finish (test/hostile-digests.ts). Nodes, or a number, string or boolean.
      */
     readonly reference?: (doc: DomNode) => unknown;
+    /**
+     * The answer under the XPath 1.0 Recommendation (strict mode) where it differs from upstream's, derived the same way
+     * (plain DOM code, from the text of section 2.2 and 5). The gate uses it instead of the oracle's digest for a
+     * candidate run in strict mode (CANDIDATE_MODE=strict); it is recorded in baselines/strict-digests.json.
+     */
+    readonly strictReference?: (doc: DomNode) => unknown;
     /** Added with the engine's limits: not run for a candidate that has none (the bugsee/xpath fork). */
     readonly engineOnly?: boolean;
 }
@@ -120,7 +126,10 @@ export const CASES: readonly Case[] = [
     {
         name: '8k siblings, preceding of all',
         expression: '//a/preceding::*',
-        xml: () => fit('<r>', '<a/>', '</r>', 32 * KiB)
+        xml: () => fit('<r>', '<a/>', '</r>', 32 * KiB),
+        // Section 2.2: the preceding nodes of an `a` are the earlier `a`s; the root is an ancestor, so it is not among them
+        // (upstream's axis contains the ancestors, and its answer holds the root as well).
+        strictReference: (doc) => elementChildren(doc.documentElement).slice(0, -1)
     },
     {
         name: '6k elements, each its own namespace',
@@ -131,7 +140,18 @@ export const CASES: readonly Case[] = [
         name: 'root with 3,000 namespace declarations, 20k children',
         expression: '//*/@*',
         xml: () =>
-            `<r ${Array.from({ length: 3000 }, (_, i) => `xmlns:n${i}="urn:n${i}"`).join(' ')}>${'<n7:a x="1"/>'.repeat(20000)}</r>`
+            `<r ${Array.from({ length: 3000 }, (_, i) => `xmlns:n${i}="urn:n${i}"`).join(' ')}>${'<n7:a x="1"/>'.repeat(20000)}</r>`,
+        // Section 5.3: a namespace declaration is not an attribute of its element. The 3,000 declarations on the root, which
+        // upstream returns as attributes, are not in the answer: only the `x` of each child is.
+        strictReference: (doc) =>
+            elementChildren(doc.documentElement).flatMap((element) => {
+                const out: DomNode[] = [];
+                for (let i = 0; i < (element.attributes?.length ?? 0); i++) {
+                    const attribute = element.attributes?.item(i);
+                    if (attribute != null && !String(attribute.name).startsWith('xmlns')) out.push(attribute);
+                }
+                return out;
+            })
     },
     {
         name: 'samlify assertion-signature path, 7k <Assertion><Signature/></Assertion>',
