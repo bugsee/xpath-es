@@ -132,7 +132,7 @@ function expression(): string {
     const second = random() < 0.25 ? `/${pick(['following', 'preceding'])}::${pick(TESTS)}${pick(PREDICATES)}` : '';
     const path = `${pick(CONTEXTS)}/${step}${second}${pick(TAILS)}`;
     // Parenthesised so that a wrapper such as `% | //b` or `(%)[1]` applies to the whole path.
-    return pick(WRAPS).replace('%', path);
+    return pick(WRAPS).replaceAll('%', () => path);
 }
 
 function outcome(
