@@ -198,7 +198,8 @@ export class EvalState {
             if (++visits % 4096 === 0) this.charge(4096);
             if (node.nodeType === ELEMENT_NODE && node.getAttribute !== undefined) {
                 const id = node.getAttribute('id');
-                const identifier = id ?? (this.strict ? node.getAttribute('xml:id') : null);
+                // Some DOMs (xmldom) answer '' for a missing attribute, so an empty id counts as missing for the fallback.
+                const identifier = this.strict && (id == null || id === '') ? node.getAttribute('xml:id') : id;
                 if (identifier != null && identifier !== '' && !index.has(identifier)) index.set(identifier, node);
             }
             let next: DomNode | null | undefined = node.firstChild;

@@ -46,6 +46,10 @@ for (const [at, item] of CASES.entries()) {
     console.log(`${at} ${item.name}: ${parsed.digest} (${parsed.size} nodes; differs from upstream by design)`);
 }
 const note = 'plain-DOM answers under XPath 1.0 where strict mode differs from upstream by design';
-writeFileSync(output, `${JSON.stringify({ note, cases: entries }, null, 4)}\n`);
-console.log(`written ${output}`);
+// An incomplete set of entries would make the gate fall back to upstream's digest for a case that was left out, so the
+// existing baseline is replaced only when every reference was computed.
+if (problems === 0) {
+    writeFileSync(output, `${JSON.stringify({ note, cases: entries }, null, 4)}\n`);
+    console.log(`written ${output}`);
+} else console.log(`not written: ${problems} problem(s); ${output} is unchanged`);
 process.exitCode = problems === 0 ? 0 : 1;

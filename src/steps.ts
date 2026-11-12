@@ -1072,7 +1072,10 @@ export function applyStep(step: CompiledStep, list: NodeList, state: EvalState):
     if (step.positional || !state.pure) applyPerContext(step, list, state);
     else if (state.strict && step.axis === 'preceding') {
         // Strict preceding excludes ancestors, which the one-sweep set form (upstream's meaning of the axis) does not.
-        if (!applyStrictPreceding(step, list, state)) applyPerContext(step, list, state);
+        // One context stays on the per-context walk (it numbers nothing), and so does an evaluation with a namespace
+        // callback, which the resolver contract asks at every name test: a pass that tests a node once would skip asks.
+        const oneSweep = list.nodes.length > 1 && !state.settings.namespaceCallback;
+        if (!oneSweep || !applyStrictPreceding(step, list, state)) applyPerContext(step, list, state);
     } else applyToSet(step, list, state);
 }
 

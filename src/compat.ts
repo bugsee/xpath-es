@@ -23,7 +23,7 @@ import { sortInDocumentOrder } from './order.ts';
 import { lookupNamespaceInDom, XPathProgram } from './program.ts';
 import type { XPathMode } from './program.ts';
 import type { RawEvaluateOptions } from './program.ts';
-import { NodeSet, numberToString, stringToNumber, stringValueOf } from './runtime.ts';
+import { NodeSet, numberToString, stringToNumber, stringValueOf, toNumberValue } from './runtime.ts';
 import type { CustomFunction, EvalState, FunctionLookup, NamespaceLookup, VariableLookup, XValue } from './runtime.ts';
 
 export type SelectedValue = DomNode | string | number | boolean | null | undefined;
@@ -260,7 +260,7 @@ export interface SelectOptions {
     readonly budget?: number | undefined;
     /** Wall-clock limit in milliseconds; see DEFAULT_TIMEOUT_MS. 0 turns it off. */
     readonly timeoutMs?: number | undefined;
-    /** `upstream` (the default) or `strict` XPath 1.0. */
+    /** `strict` (the default) XPath 1.0, or `upstream`: the behaviour of xpath 0.0.36. */
     readonly mode?: XPathMode | undefined;
 }
 
@@ -421,7 +421,7 @@ export interface XPathEvaluateOptions {
     budget?: number | undefined;
     /** xpath-es extension (not in upstream): wall-clock limit in milliseconds, see EvaluateOptions.timeoutMs. */
     timeoutMs?: number | undefined;
-    /** xpath-es extension (not in upstream): `strict` XPath 1.0 for this evaluation; the default is `upstream`. */
+    /** xpath-es extension (not in upstream): `strict` XPath 1.0 for this evaluation; the default is `strict`. */
     mode?: XPathMode | undefined;
 }
 
@@ -664,7 +664,11 @@ export function evaluate(
     const node = contextNodeOf(contextNode);
     const namespaces: NamespaceLookup = resolver == null ? () => null : (prefix) => resolver.lookupNamespaceURI(prefix);
     const caseInsensitive = program.mode === 'strict' ? isHtmlDocument(node) : detectHtmlDom(node);
-    const { value } = program.runRaw({ node, namespaces, caseInsensitive });
+    const { value, state } = program.runRaw({ node, namespaces, caseInsensitive });
+    // Strict: a node-set asked for as a number goes through the grammar of 4.4 (an empty node-set is NaN, `0x10` is
+    // NaN), not through JavaScript's Number() as upstream does.
+    if (type === XPathResult.NUMBER_TYPE && state.strict && value instanceof NodeSet)
+        return new XPathResult(new XNumber(toNumberValue(value, state)), type);
     return new XPathResult(wrap(value), type);
 }
 
