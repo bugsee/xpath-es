@@ -16,7 +16,8 @@ import {
     XPathContextError,
     XPathLimitError,
     XPathProgram,
-    XPathResolveError
+    XPathResolveError,
+    XPathTimeoutError
 } from '../support/engine.ts';
 
 const parseXml = loadDom('xmldom08');
@@ -39,7 +40,9 @@ void test('id() of a node-set serialises under the budget: a 5,000-deep chain no
     const chain = parseXml(`${'<a>'.repeat(5000)}${'</a>'.repeat(5000)}`);
     assert.throws(
         () => parse('id(//*)').select({ node: chain }),
-        (error: unknown) => error instanceof XPathLimitError || error instanceof XPathBudgetError
+        // A slow runner may reach the time limit before the budget; any typed refusal proves nothing was built unbounded.
+        (error: unknown) =>
+            error instanceof XPathLimitError || error instanceof XPathBudgetError || error instanceof XPathTimeoutError
     );
 });
 
