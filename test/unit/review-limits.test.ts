@@ -16,8 +16,7 @@ import {
     XPathContextError,
     XPathLimitError,
     XPathProgram,
-    XPathResolveError,
-    XPathTimeoutError
+    XPathResolveError
 } from '../support/engine.ts';
 
 const parseXml = loadDom('xmldom08');
@@ -38,12 +37,11 @@ void test('id(): one index per evaluation, tokens bounded (before: 10,000 tokens
 
 void test('id() of a node-set serialises under the budget: a 5,000-deep chain no longer builds gigabytes', () => {
     const chain = parseXml(`${'<a>'.repeat(5000)}${'</a>'.repeat(5000)}`);
-    assert.throws(
-        () => parse('id(//*)').select({ node: chain }),
-        // A slow runner may reach the time limit before the budget; any typed refusal proves nothing was built unbounded.
-        (error: unknown) =>
-            error instanceof XPathLimitError || error instanceof XPathBudgetError || error instanceof XPathTimeoutError
-    );
+    // The time limit is off, so the outcome does not depend on the speed of the runner. The serialisation is charged
+    // before it is built: a small work budget stops it on the first walk (before the change nothing was charged and
+    // the chain was serialised 5,000 times); with the default budget the 16M-character cap on the argument stops it.
+    assert.throws(() => parse('id(//*)').select({ node: chain, timeoutMs: 0, budget: 200_000 }), XPathBudgetError);
+    assert.throws(() => parse('id(//*)').select({ node: chain, timeoutMs: 0 }), XPathLimitError);
 });
 
 void test('the namespace axis makes a bounded number of nodes (before: 8,000 levels made 32 million, 4 GB)', () => {

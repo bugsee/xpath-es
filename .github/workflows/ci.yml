@@ -36,9 +36,26 @@ jobs:
       - run: npm ci --ignore-scripts
       # The harness tests itself first: a gate that never fails is worth nothing.
       - run: npm run test:harness
-      # The candidate (the bugsee/xpath fork by default) against upstream xpath: random documents with the whole
-      # corpus, the mutation scenarios, and random expressions.
+      # The engine (src) against upstream xpath: random documents with the whole corpus, the mutation scenarios, and
+      # random expressions. A candidate that does not come back within the time limit fails the run.
       - run: npm run test:differential
+
+  # The bugsee/xpath fork that the appserver ships today, against upstream, as before: documents and scenarios block.
+  # The expression fuzzer is informational for the fork: the fork has no hoisting of nested absolute paths, so it does
+  # not come back on some random `//a[//b[...]]` expressions (the engine does; the engine's run above gates).
+  fork:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:differential:fork
+      - run: npm run test:fuzz-expr:fork
+        continue-on-error: true
 
   hostile:
     runs-on: ubuntu-latest

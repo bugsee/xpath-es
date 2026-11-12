@@ -10,6 +10,7 @@
 //   CLASSIFY=all|ns-duplicate  the split gate: differences in the documented classes (see test/fuzz.ts) are counted
 //   apart and do not fail the run; every other difference does
 
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { isReport } from './fuzz-expr-worker.ts';
@@ -45,6 +46,18 @@ function runBatch(job: Job): Promise<number> {
             else slow.candidate++;
             if (slowSamples.length < 5)
                 slowSamples.push(`${candidateDone ? 'upstream' : 'candidate'}: ${job.expressions[current] ?? ''}`);
+            // FUZZ_DUMP=<file prefix> keeps the document, the expression and the context picks of a slow case.
+            const dump = process.env['FUZZ_DUMP'];
+            if (dump !== undefined)
+                writeFileSync(
+                    `${dump}-${slow.candidate + slow.upstream}-${candidateDone ? 'upstream' : 'candidate'}.json`,
+                    JSON.stringify({
+                        dom: job.dom,
+                        xml: job.xml,
+                        expression: job.expressions[current],
+                        picks: job.picks
+                    })
+                );
             void worker.terminate().then(() => resolve(current));
         }
         worker.on('message', (message: unknown) => {

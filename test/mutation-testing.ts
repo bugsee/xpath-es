@@ -23,6 +23,13 @@ interface Mutant {
 
 const MUTANTS: readonly Mutant[] = [
     {
+        name: 'id(node-set) serialises with no charge and no length cap',
+        file: 'src/functions.ts',
+        find: 'function serialisedIds(set: NodeSet, state: EvalState): string {',
+        replace:
+            "function serialisedIds(set: NodeSet, real: EvalState): string {\n    return set.sorted(real).map((node) => stringify(node)).join(' ');\n}\n// @ts-expect-error unused\nfunction chargedSerialisedIds(set: NodeSet, state: EvalState): string {"
+    },
+    {
         name: "sibling-count fast path: off by one for a parent with more than 3,000 children (the reviewer's)",
         file: 'src/compile.ts',
         find: 'ranks.set(child, preceding ? before : total - before - (matches ? 1 : 0));',

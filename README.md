@@ -153,7 +153,8 @@ npm run check            # tsc (TypeScript 7, every strict flag), oxlint (type-a
 npm run test:unit        # unit tests of the engine (node:test)
 npm run build            # dist/: ES modules and CommonJS with declarations, same compiler and strict options
 npm run test:harness     # the harness tests itself on candidates whose verdict is known
-npm run test:differential
+npm run test:differential        # the engine against upstream xpath (documents, scenarios, random expressions)
+npm run test:differential:fork   # the bugsee/xpath fork against upstream (its expression fuzzer: test:fuzz-expr:fork)
 npm run test:hostile
 npm run fixtures         # builds the signed SAML responses the benchmarks use (results/, not committed)
 npm run bench:hostile    # numbers, per engine
