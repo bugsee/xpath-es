@@ -1,0 +1,6 @@
+A id() 1000 tokens, doc 50000 elems                                  780 ms 1000
+A id() 1000 tokens, all MISSING                                     3363 ms 1
+A id() 10000 tokens, doc 50000 elems                                9143 ms 10000
+A id() 10000 tokens, all MISSING                                   41884 ms 1
+A id() 40000 tokens, doc 50000 elems                               74720 ms ERR XPathTimeoutError XPath evaluation exceeded its time limit of 10000 ms
+A id() 40000 tokens, all MISSING                                  101524 ms 1

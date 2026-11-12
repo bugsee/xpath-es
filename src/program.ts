@@ -114,7 +114,9 @@ export class XPathProgram {
             namespaces: options.namespaces ?? lookupNamespaceInDom,
             variables: options.variables ?? null,
             functions: options.functions ?? null,
-            pure: !XPathProgram.forceSlowPath && !namespaceCallback && !variableCallback && !functionCallback,
+            pure: !XPathProgram.forceSlowPath && !variableCallback && !functionCallback,
+            namespaceCallback,
+            keepNumbering: !XPathProgram.forceSlowPath,
             budget,
             timeoutMs,
             mergeUnions: options.mergeUnions ?? true

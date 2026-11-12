@@ -1,0 +1,8 @@
+upstream useNamespaces string(a:y): 60 ms 0
+xpath-es useNamespaces string(a:y): 1003 ms 0
+engine, namespaces plain map via parse(): 1 ms
+pure   //x[string(y)=""]  N=3000                                   3 ms 3000
+resolver //a:x[string(a:y)="q"] N=3000                          1188 ms 0
+resolver //a:x[a:y[2]] N=3000                                      2 ms 3000
+resolver //a:x[count(a:y|a:y)=2] N=3000                            3 ms 3000
+resolver //a:x[name(a:y)="q"]                                   1181 ms 0

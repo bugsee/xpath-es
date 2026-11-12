@@ -247,7 +247,11 @@ export function compileCall(name: string, args: readonly Compiled[]): Compiled {
             const custom = lookup === null ? null : lookup(localName, namespace);
             if (custom != null) {
                 const values = args.map((arg) => arg(focus, state));
-                return custom(focus, state, values);
+                try {
+                    return custom(focus, state, values);
+                } finally {
+                    state.userCodeRan();
+                }
             }
             if (prefix !== null) throw new XPathResolveError(`Unknown function ${name}`);
         }
@@ -377,6 +381,7 @@ export function compile(expr: Expr): Compiled {
             return (focus, state) => {
                 const namespace = prefix === null ? '' : state.resolvePrefix(prefix, focus.node);
                 const value = state.settings.variables?.(localName, namespace);
+                if (!state.pure) state.userCodeRan();
                 if (value == null) throw new XPathResolveError(`Undeclared variable: $${name}`);
                 return value;
             };

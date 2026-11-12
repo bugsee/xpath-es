@@ -1,0 +1,4 @@
+(eval):1: command not found: timeout
+----dos4 ns
+C count(//namespace::*) depth 4000 (8000000 ns nodes)                     1373 ms 8006000 rss 1184MB
+C count(//namespace::*) depth 8000 (32000000 ns nodes)                    6620 ms 32012000 rss 4085MB

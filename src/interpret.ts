@@ -123,6 +123,7 @@ export function interpret(expr: Expr, focus: Focus, state: EvalState): XValue {
         }
         case 'variable': {
             const value = state.settings.variables?.(expr.name, '');
+            if (!state.pure) state.userCodeRan();
             if (value == null) throw new XPathResolveError(`Undeclared variable: $${expr.name}`);
             return value;
         }

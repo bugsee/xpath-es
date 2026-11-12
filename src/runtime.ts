@@ -11,7 +11,7 @@ import {
 import type { DomNode } from './dom.ts';
 import { XPathBudgetError, XPathOrderError, XPathResolveError, XPathTimeoutError } from './errors.ts';
 import { now } from './clock.ts';
-import { Numbering } from './order.ts';
+import { FEW_NODES, Numbering, sortFew } from './order.ts';
 
 /**
  * A node-set: an array without duplicates plus one fact about it, whether it is known to be in document order.
@@ -83,6 +83,13 @@ export interface EvalSettings {
      * Only then may the engine keep a numbering or a sibling index across steps, and trust the core functions' types.
      */
     readonly pure: boolean;
+    /**
+     * The namespace resolver is caller code (a function). It is asked at every name test, as upstream does, but it is
+     * not allowed to change the document (the contract, see the README), so it does not make the evaluation impure.
+     */
+    readonly namespaceCallback: boolean;
+    /** Keep the document-order numbering between calls. False only for the slow-path test switch. */
+    readonly keepNumbering: boolean;
     /** Node visits allowed, or 0 for no limit. */
     readonly budget: number;
     /** Wall-clock milliseconds allowed, or 0 for no limit. Checked as work is charged, not on a timer. */
@@ -140,18 +147,36 @@ export class EvalState {
         }
     }
 
+    /**
+     * Caller code that can change the document (a custom function, a variable resolver) has run: whatever was derived
+     * from the document (the numbering, the sibling ranks) may be stale and is dropped. Nothing is dropped while no such
+     * code runs, which is what keeps an evaluation with a namespace resolver linear.
+     */
+    userCodeRan(): void {
+        this.#numbering = null;
+        this.siteCaches.clear();
+    }
+
     /** Document order for a duplicate-free array. Throws XPathOrderError when the nodes are not in one tree. */
     sort(nodes: readonly DomNode[]): DomNode[] {
         const first = nodes[0];
         if (first === undefined || nodes.length === 1) return nodes.slice();
         let numbering = this.#numbering;
         let sorted = numbering === null ? null : numbering.sort(nodes);
+        // Caller code keeps invalidating the numbering (see userCodeRan): a few nodes are ordered locally, because
+        // numbering the whole tree for each of them is what made such an evaluation quadratic.
+        if (sorted === null && numbering === null && !this.pure && nodes.length <= FEW_NODES) {
+            sorted = sortFew(nodes, (units) => {
+                this.charge(units);
+            });
+            if (sorted !== null) return sorted;
+        }
         if (sorted === null) {
             // No numbering yet, or it is for another tree.
             numbering = new Numbering(first);
             this.charge(numbering.size);
             sorted = numbering.sort(nodes);
-            if (this.pure) this.#numbering = numbering;
+            if (this.settings.keepNumbering) this.#numbering = numbering;
         }
         if (sorted === null) throw new XPathOrderError();
         this.charge(nodes.length);
@@ -168,7 +193,7 @@ export class EvalState {
             numbering = new Numbering(first);
             this.charge(numbering.size);
             merged = numbering.merge(a, b);
-            if (this.pure) this.#numbering = numbering;
+            if (this.settings.keepNumbering) this.#numbering = numbering;
         }
         this.charge(a.length + b.length);
         return merged;
@@ -183,7 +208,7 @@ export class EvalState {
 
     /** Namespace URI for the prefix of a name test: looked up from the node the evaluation started on. */
     resolveNameTestPrefix(prefix: string): string {
-        if (!this.pure) return this.resolvePrefix(prefix, this.settings.contextNode);
+        if (!this.pure || this.settings.namespaceCallback) return this.resolvePrefix(prefix, this.settings.contextNode);
         const known = this.#prefixes.get(prefix);
         if (known !== undefined) return known;
         const uri = this.resolvePrefix(prefix, this.settings.contextNode);
