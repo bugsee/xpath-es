@@ -93,6 +93,9 @@ jobs:
       - run: CLASSIFY=ns-duplicate node test/fuzz-expr.ts xmldom08 60 100 31 ns 5000
       - run: CLASSIFY=all node test/fuzz-expr.ts xmldom09 60 100 31 ns 5000
       - run: node test/mode-agreement.ts 60 100 31
+      # Strict following::/preceding:: fast paths against the strict slow path (the reference), on both gated DOMs.
+      - run: node test/strict-axes-fuzz.ts 60 100 31 xmldom08
+      - run: node test/strict-axes-fuzz.ts 40 100 31 xmldom09
       # Cases marked engineOnly (the limits, the resolver and id() paths) run only for the engine; every case has an
       # oracle digest, and the cases the engine must refuse have to stop with a typed error.
       - run: HOSTILE_ENGINE_CASES=1 HOSTILE_STRICT=1 node test/hostile.ts

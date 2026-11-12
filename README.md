@@ -57,7 +57,7 @@ Why the other DOMs do not gate: upstream delegates ordering to the DOM there and
 `compareDocumentPosition` is not a document order, happy-dom and jsdom misorder or drop attributes). The engine
 returns true document order, and throws `XPathOrderError` for node-sets of several trees.
 
-Other deliberate differences from upstream, in the default mode:
+Other deliberate differences from upstream, in either mode:
 
 - Error *messages* differ where upstream throws an accidental `TypeError` or `ReferenceError`; the engine throws typed
   errors, and the fuzzers compare the *category* of two errors (syntax, unresolvable name, type, no document order,
@@ -77,20 +77,20 @@ Other deliberate differences from upstream, in the default mode:
 ## Modes: upstream and strict
 
 `new XPathProgram(source, { mode })`, `select(expression, node, false, { mode })`, `parse(expression, { mode })` and the
-`mode` option of the evaluator take `'upstream'` (the default) or `'strict'`.
+`mode` option of the evaluator take `'strict'` (the default) or `'upstream'`.
 
-- **`upstream`** is the adoption gate: the node-sets and the values existing consumers (samlify, xml-crypto,
+- **`upstream`** (opt in with `mode: 'upstream'`) is the adoption gate: the node-sets and the values existing consumers (samlify, xml-crypto,
   xml-encryption) have always seen from `xpath` 0.0.36, quirks included.
-- **`strict`** is XPath 1.0 as the Recommendation (16 November 1999) specifies it. Its answers are checked against the
+- **`strict`** (the default) is XPath 1.0 as the Recommendation (16 November 1999) specifies it. Its answers are checked against the
   text of the Recommendation (`test/unit/strict-spec.test.ts`), never against upstream, and `test/mode-agreement.ts`
   checks that on every random expression that uses none of the deviating features the two modes agree, so strict mode
   does not regress where upstream is right.
 
-### Known deviations from XPath 1.0 inherited from upstream (default mode)
+### Known deviations from XPath 1.0 inherited from upstream (`upstream` mode)
 
 Each one is pinned in both modes in `test/unit/modes.test.ts`.
 
-| | `upstream` mode (default) | `strict` mode |
+| | `upstream` mode | `strict` mode (default) |
 |---|---|---|
 | `following::` (2.2) | includes the context node's descendants and, when it has children, leaves out its following siblings; `/r/a[1]/following::e` finds nothing | not the descendants; the following siblings of the node and of each ancestor with their subtrees (for an attribute or namespace node, its element's children too) |
 | `preceding::` (2.2) | includes the ancestors and the document node | excludes ancestors; an attribute or namespace node stands where its element stands |
@@ -110,6 +110,16 @@ Each one is pinned in both modes in `test/unit/modes.test.ts`.
 **`id()` cannot detect duplicate IDs in either mode.** When two elements have the same ID, `id()` answers the first in
 the order the DOM looks up (document order for the DOMs tested); the Recommendation leaves duplicates undefined, and
 Blink, WebKit and Gecko answer the first as well. The ID attributes are `id` and, in strict mode, `xml:id`.
+
+Strict is the default, so code written against `xpath` that relied on a quirk above must ask for `mode: 'upstream'`.
+Cost: strict `following::` and `preceding::` are linear over a node-set of contexts. Without a positional predicate they
+are one pass over the tree (`preceding::` of a set is everything before the last context that is not an ancestor of it).
+With `[k]` or `[last()]` as the first predicate they are one pass over the tree, then a lookup per context node by
+document-order number (a binary search; the ancestors of each context are kept on a stack while the contexts are taken
+in document order), so that the position stays relative to each context's own axis. `//b/preceding::*` over 3,000 `b`
+elements takes 21,000 units (it took 9 million), `//a/following::b[1]` 63,000. A predicate that is positional in another
+way (`[position() < 3]`, `[last() - 1]`, a positional predicate that is not the first) is still evaluated per context node
+and costs a walk of the axis for each, so it can reach the budget over thousands of contexts; raise the budget for such a call.
 
 ## Limits
 
@@ -184,6 +194,8 @@ CANDIDATE=xpath node test/mutation.ts        # the oracle against itself: must s
 | `test/mutation.ts` | the document changes while a result is held, or while an expression is being evaluated by a custom function |
 | `test/hostile.ts` | the hostile gate, below |
 | `test/hostile-digests.ts` | records what the oracle answers on each hostile case (`baselines/oracle-digests.json`) |
+| `test/hostile-strict-digests.ts` | records the Recommendation's answer, from plain DOM code, on the hostile cases where strict mode differs from upstream by design (`baselines/strict-digests.json`, used when `CANDIDATE_MODE=strict`) |
+| `test/strict-axes-fuzz.ts <documents> <expressions> [seed] [dom]` | strict `following::`/`preceding::` fast paths against the strict slow path (`XPathProgram.forceSlowPath`), on random node-set contexts with positional predicates |
 | `test/harness-selftest.ts` | a candidate that reverses node-sets must be caught by the fuzzer, a quadratic one by the gate |
 
 The DOM matrix for `<dom>`: `xmldom08` (`@xmldom/xmldom` 0.8.15, the default), `xmldom09` (`@xmldom/xmldom` 0.9.x), `jsdom`,

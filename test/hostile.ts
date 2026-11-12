@@ -27,7 +27,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { CASES } from '../bench/hostile-cases.ts';
 import { isMeasurement } from '../bench/hostile-run.ts';
-import { candidateSpec } from './harness.ts';
+import { candidateMode, candidateSpec } from './harness.ts';
 
 const boundMs = Number(process.env['HOSTILE_BOUND_MS'] ?? 10_000);
 const killAfterMs = boundMs + 5_000;
@@ -48,9 +48,9 @@ function readJson(file: string): unknown {
     return JSON.parse(readFileSync(file, 'utf8'));
 }
 
-/** The oracle's digest per case name; a missing file or a null entry means "unknown". */
-function loadOracleDigests(): ReadonlyMap<string, string> {
-    const file = path.join(root, 'baselines/oracle-digests.json');
+/** The digest per case name in a file of baselines/; a missing file or a null entry means "unknown". */
+function loadOracleDigests(name = 'oracle-digests.json'): ReadonlyMap<string, string> {
+    const file = path.join(root, 'baselines', name);
     const digests = new Map<string, string>();
     if (!existsSync(file)) return digests;
     const content = readJson(file);
@@ -95,6 +95,10 @@ interface Row {
 }
 
 const oracle = loadOracleDigests();
+// A candidate run in strict mode (CANDIDATE_MODE=strict) is judged against the Recommendation, not against upstream, on the
+// cases where the two differ by design (baselines/strict-digests.json: plain-DOM answers, bench/hostile-cases.ts).
+const strictDigests =
+    candidateMode() === 'strict' ? loadOracleDigests('strict-digests.json') : new Map<string, string>();
 const baseline = loadBaseline();
 const rows: Row[] = [];
 
@@ -126,7 +130,7 @@ CASES.forEach((item, at) => {
         });
         return;
     }
-    const expected = oracle.get(item.name);
+    const expected = strictDigests.get(item.name) ?? oracle.get(item.name);
     if (expected === undefined)
         rows.push({
             at,
@@ -164,7 +168,7 @@ CASES.forEach((item, at) => {
             name: item.name,
             verdict: 'wrong',
             ms: parsed.ms,
-            note: `result ${parsed.digest}, oracle ${expected}`
+            note: `result ${parsed.digest}, ${strictDigests.has(item.name) ? 'strict reference' : 'oracle'} ${expected}`
         });
     else
         rows.push({

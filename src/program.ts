@@ -125,9 +125,9 @@ export const DEFAULT_BUDGET: number = 5_000_000;
 export const DEFAULT_TIMEOUT_MS: number = 1_000;
 
 /**
- * `upstream` (the default) behaves as `xpath` 0.0.36 does, including where it departs from the Recommendation: that is
- * what existing consumers have always seen, and the adoption gate. `strict` follows the Recommendation (README,
- * "Known deviations from XPath 1.0 inherited from upstream"). The mode is fixed when the program is made, because
+ * `strict` (the default) follows the Recommendation (README, "Known deviations from XPath 1.0 inherited from upstream").
+ * `upstream` behaves as `xpath` 0.0.36 does, including where it departs from the Recommendation: that is what existing
+ * consumers have always seen, and the adoption gate. The mode is fixed when the program is made, because
  * some differences are in how the expression parses.
  */
 export type XPathMode = 'upstream' | 'strict';
@@ -185,7 +185,7 @@ export class XPathProgram {
     static forceSlowPath = false;
 
     readonly source: string;
-    /** `upstream`: the behaviour of xpath 0.0.36, quirks included (the default). `strict`: XPath 1.0 as specified. */
+    /** `strict`: XPath 1.0 as specified (the default). `upstream`: the behaviour of xpath 0.0.36, quirks included. */
     readonly mode: XPathMode;
     /** @internal */
     readonly ast: Expr;
@@ -195,7 +195,7 @@ export class XPathProgram {
 
     constructor(source: string, options: ProgramOptions = {}) {
         this.source = source;
-        this.mode = options.mode ?? 'upstream';
+        this.mode = options.mode ?? 'strict';
         this.ast = parseXPath(source, options.limits ?? DEFAULT_PARSE_LIMITS, this.mode === 'strict');
         this.facts = expressionFacts(this.ast);
         this.#run = compile(this.ast);

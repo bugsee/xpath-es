@@ -21,8 +21,10 @@ import {
 
 const parseXml = loadDom('xmldom08');
 
-function work(expression: string, xml: string): number {
-    return new XPathProgram(expression).run({ node: parseXml(xml) }).work;
+// These tests were written against upstream's evaluation order and cost, so they ask for it; the strict mode has its
+// own cases below.
+function work(expression: string, xml: string, mode: 'upstream' | 'strict' = 'upstream'): number {
+    return new XPathProgram(expression, { mode }).run({ node: parseXml(xml) }).work;
 }
 
 void test('id(): one index per evaluation, tokens bounded (before: 10,000 tokens took 9 s, 10,000 missing ones 42 s)', () => {
@@ -40,8 +42,14 @@ void test('id() of a node-set serialises under the budget: a 5,000-deep chain no
     // The time limit is off, so the outcome does not depend on the speed of the runner. The serialisation is charged
     // before it is built: a small work budget stops it on the first walk (before the change nothing was charged and
     // the chain was serialised 5,000 times); with the default budget the 16M-character cap on the argument stops it.
-    assert.throws(() => parse('id(//*)').select({ node: chain, timeoutMs: 0, budget: 200_000 }), XPathBudgetError);
-    assert.throws(() => parse('id(//*)').select({ node: chain, timeoutMs: 0 }), XPathLimitError);
+    const upstream = { mode: 'upstream' } as const;
+    assert.throws(
+        () => parse('id(//*)', upstream).select({ node: chain, timeoutMs: 0, budget: 200_000 }),
+        XPathBudgetError
+    );
+    assert.throws(() => parse('id(//*)', upstream).select({ node: chain, timeoutMs: 0 }), XPathLimitError);
+    // Strict mode reads the string-value of every node, which on a chain is quadratic: a typed budget error, quickly.
+    assert.throws(() => parse('id(//*)').select({ node: chain, timeoutMs: 0 }), XPathBudgetError);
 });
 
 void test('the namespace axis makes a bounded number of nodes (before: 8,000 levels made 32 million, 4 GB)', () => {
@@ -80,6 +88,12 @@ void test('reverse axes are read nearest first, and [last()] from the cheap end'
     assert.ok(work('//a/preceding::a[1]', `<r>${'<a><b/></a>'.repeat(3000)}</r>`) < 200_000);
     assert.ok(work('//b[position()=last()]/preceding::*[last()]', `<r>${'<a><b/></a>'.repeat(3000)}</r>`) < 200_000);
     assert.ok(work('//a/preceding-sibling::a[last()]', `<r>${'<a/>'.repeat(50_000)}</r>`) < 1_000_000);
+});
+
+void test('strict mode (the default): the cheap reverse-axis cases stay cheap', () => {
+    const chain = `<r>${'<a><b/></a>'.repeat(3000)}</r>`;
+    assert.ok(work('//a/preceding::a[1]', chain, 'strict') < 200_000);
+    assert.ok(work('//a/preceding-sibling::a[last()]', `<r>${'<a/>'.repeat(50_000)}</r>`, 'strict') < 1_000_000);
 });
 
 void test('lang() is linear on a deep document for a DOM that answers null for a missing attribute', () => {

@@ -24,6 +24,7 @@ import {
     XML_NAMESPACE_URI
 } from './dom.ts';
 import type { DomNode } from './dom.ts';
+import { anchorOf, positionalHits, strictPrecedingOfSet } from './ranked.ts';
 import type { Compiled, EvalState, Focus } from './runtime.ts';
 import { toBooleanValue } from './runtime.ts';
 
@@ -136,11 +137,6 @@ function axisParent(node: DomNode, strict: boolean): DomNode | null {
     // Q-AXIS-1: upstream's namespace node has no parent. XPath 1.0 section 5.4: its parent is the element.
     if (strict && node.nodeType === NAMESPACE_NODE) return node.ownerElement ?? null;
     return node.parentNode ?? null;
-}
-
-/** The node an attribute or namespace node hangs from; a tree node is its own place in the tree. */
-function anchorOf(node: DomNode): DomNode {
-    return node.nodeType === ATTRIBUTE_NODE || node.nodeType === NAMESPACE_NODE ? (node.ownerElement ?? node) : node;
 }
 
 /** Strict: a namespace declaration (`xmlns`, `xmlns:p`) is not an attribute of the element (section 5.3). */
@@ -629,11 +625,31 @@ function applyPerContext(step: CompiledStep, list: NodeList, state: EvalState): 
             out.push(node);
         }
     };
+    // Strict following:: and preceding:: with [k] or [last()] over several context nodes: one pass over the tree, then a
+    // lookup per context node (src/ranked.ts), not a walk of the axis for each.
+    let hits: (DomNode | null)[] | null = null;
+    if (
+        state.strict &&
+        state.pure &&
+        !state.settings.namespaceCallback &&
+        input.length > 1 &&
+        (axis === 'following' || axis === 'preceding') &&
+        first !== undefined &&
+        (first.index !== null || first.isLast)
+    ) {
+        const k = first.index;
+        // No node can be the k-th when k is not a positive integer.
+        hits =
+            k !== null && !(Number.isInteger(k) && k >= 1)
+                ? input.map(() => null)
+                : positionalHits(axis, step.match, k, input, state);
+    }
     const shortcut =
         state.pure &&
         first !== undefined &&
         axis !== 'namespace' &&
-        (first.index !== null ||
+        (hits !== null ||
+            first.index !== null ||
             (first.isLast && LAST_FROM_THE_FAR_END.has(axis) && !(state.strict && axis === 'preceding')));
     for (let c = 0; c < input.length; c++) {
         const context = input[c];
@@ -642,13 +658,15 @@ function applyPerContext(step: CompiledStep, list: NodeList, state: EvalState): 
         if (shortcut && first !== undefined) {
             const k = first.index;
             const hit =
-                k === null
-                    ? lastOnAxis(step, context, state)
-                    : Number.isInteger(k) && k >= 1
-                      ? nthOnAxis(step, context, k, state)
-                      : // No node can be the k-th, but upstream still applies the node test to the candidates (and fails
-                        // on a prefix it cannot resolve), so the first one is tested.
-                        (nthOnAxis(step, context, 1, state), null);
+                hits !== null
+                    ? (hits[c] ?? null)
+                    : k === null
+                      ? lastOnAxis(step, context, state)
+                      : Number.isInteger(k) && k >= 1
+                        ? nthOnAxis(step, context, k, state)
+                        : // No node can be the k-th, but upstream still applies the node test to the candidates (and fails
+                          // on a prefix it cannot resolve), so the first one is tested.
+                          (nthOnAxis(step, context, 1, state), null);
             kept = hit === null ? [] : filterByPredicates([hit], predicates, 1, focus, state);
         } else {
             const candidates: DomNode[] = [];
@@ -1051,7 +1069,27 @@ export function applyDescendantPair(step: CompiledStep, list: NodeList, state: E
 export function applyStep(step: CompiledStep, list: NodeList, state: EvalState): void {
     if (list.nodes.length === 0) return;
     // Strict: the preceding axis excludes ancestors, which the one-sweep set form (upstream's meaning of the axis) does not.
-    if (step.positional || !state.pure || (state.strict && step.axis === 'preceding'))
-        applyPerContext(step, list, state);
-    else applyToSet(step, list, state);
+    if (step.positional || !state.pure) applyPerContext(step, list, state);
+    else if (state.strict && step.axis === 'preceding') {
+        // Strict preceding excludes ancestors, which the one-sweep set form (upstream's meaning of the axis) does not.
+        // One context stays on the per-context walk (it numbers nothing), and so does an evaluation with a namespace
+        // callback, which the resolver contract asks at every name test: a pass that tests a node once would skip asks.
+        const oneSweep = list.nodes.length > 1 && !state.settings.namespaceCallback;
+        if (!oneSweep || !applyStrictPreceding(step, list, state)) applyPerContext(step, list, state);
+    } else applyToSet(step, list, state);
+}
+
+/** Strict preceding:: for a whole list, in one pass (src/ranked.ts); false, with the list untouched, when it cannot. */
+function applyStrictPreceding(step: CompiledStep, list: NodeList, state: EvalState): boolean {
+    const input = list.nodes;
+    const focus: Focus = { node: input[0] ?? state.settings.contextNode, position: 1, size: 1 };
+    const out: DomNode[] = [];
+    const answered = strictPrecedingOfSet(input, state, (node) => {
+        if (passesAll(node, step, focus, state)) out.push(node);
+    });
+    if (!answered) return false;
+    list.nodes = out;
+    list.ordered = true;
+    list.flat = false;
+    return true;
 }

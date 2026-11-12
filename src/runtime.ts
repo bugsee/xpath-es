@@ -8,7 +8,7 @@ import {
     CDATA_SECTION_NODE,
     TEXT_NODE
 } from './dom.ts';
-import { NamespaceNode } from './dom.ts';
+import { NamespaceNode, treeRoot } from './dom.ts';
 import type { DomNode, NamespaceLookup } from './dom.ts';
 
 export type { NamespaceLookup };
@@ -198,7 +198,8 @@ export class EvalState {
             if (++visits % 4096 === 0) this.charge(4096);
             if (node.nodeType === ELEMENT_NODE && node.getAttribute !== undefined) {
                 const id = node.getAttribute('id');
-                const identifier = id ?? (this.strict ? node.getAttribute('xml:id') : null);
+                // Some DOMs (xmldom) answer '' for a missing attribute, so an empty id counts as missing for the fallback.
+                const identifier = this.strict && (id == null || id === '') ? node.getAttribute('xml:id') : id;
                 if (identifier != null && identifier !== '' && !index.has(identifier)) index.set(identifier, node);
             }
             let next: DomNode | null | undefined = node.firstChild;
@@ -274,6 +275,20 @@ export class EvalState {
         if (sorted === null) throw new XPathOrderError();
         this.charge(nodes.length);
         return sorted;
+    }
+
+    /**
+     * The numbering of the tree that holds `node`, made (and charged) when there is none for that tree yet. The same
+     * numbering the sorts use, so one evaluation numbers a tree once.
+     */
+    numberingFor(node: DomNode): Numbering {
+        let numbering = this.#numbering;
+        if (numbering === null || numbering.root !== treeRoot(node)) {
+            numbering = new Numbering(node);
+            this.charge(numbering.size);
+            if (this.settings.keepNumbering) this.#numbering = numbering;
+        }
+        return numbering;
     }
 
     /** Merges two ordered, duplicate-free arrays; null when it cannot (no numbering yet for the tree, several trees). */

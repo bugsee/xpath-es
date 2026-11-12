@@ -6,8 +6,9 @@ import { loadModule, loadOracle, loadCandidate, loadXPath, DEFAULT_CANDIDATE } f
 import type { DomNode } from '../test/support/dom.ts';
 
 /** `reference`: not an engine but the case's own plain-DOM answer (bench/hostile-cases.ts). */
-export type EngineName = 'upstream' | 'fork' | 'candidate' | 'reference';
-export const ENGINE_NAMES: readonly EngineName[] = ['upstream', 'candidate', 'fork', 'reference'];
+/** `strict-reference`: the case's plain-DOM answer under the XPath 1.0 Recommendation, where strict mode differs from upstream. */
+export type EngineName = 'upstream' | 'fork' | 'candidate' | 'reference' | 'strict-reference';
+export const ENGINE_NAMES: readonly EngineName[] = ['upstream', 'candidate', 'fork', 'reference', 'strict-reference'];
 /** What the tables show when ENGINES is not set. */
 export const DEFAULT_ENGINES: readonly EngineName[] = ['upstream', 'candidate'];
 /** One selection; `namespaces` makes it a selection with a namespace resolver (useNamespaces). */
@@ -23,7 +24,7 @@ export function chosenEngines(): readonly EngineName[] {
 }
 
 export function loadEngine(name: EngineName): Select {
-    if (name === 'reference') throw new Error('the reference answer is not an engine');
+    if (name === 'reference' || name === 'strict-reference') throw new Error('the reference answer is not an engine');
     const legacy =
         name === 'upstream'
             ? loadOracle()
