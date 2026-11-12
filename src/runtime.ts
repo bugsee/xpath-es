@@ -8,7 +8,7 @@ import {
     CDATA_SECTION_NODE,
     TEXT_NODE
 } from './dom.ts';
-import { NamespaceNode, treeRoot } from './dom.ts';
+import { NamespaceNode, treeRoot, XML_NAMESPACE_URI } from './dom.ts';
 import type { DomNode, NamespaceLookup } from './dom.ts';
 
 export type { NamespaceLookup };
@@ -229,7 +229,8 @@ export class EvalState {
         prefix: string,
         attribute: DomNode | null,
         uri: string,
-        local: number
+        local: number,
+        ordinal: number
     ): NamespaceNode {
         let byPrefix = this.#namespaceNodeObjects.get(owner);
         if (byPrefix === undefined) {
@@ -238,7 +239,7 @@ export class EvalState {
         }
         const known = byPrefix.get(prefix);
         if (known !== undefined && known.baseNode === attribute && known.nodeValue === uri) return known;
-        const made = new NamespaceNode(prefix, attribute, uri, owner, local);
+        const made = new NamespaceNode(prefix, attribute, uri, owner, local, ordinal);
         byPrefix.set(prefix, made);
         return made;
     }
@@ -265,7 +266,7 @@ export class EvalState {
         const first = nodes[0];
         if (first === undefined || nodes.length === 1) return nodes.slice();
         let numbering = this.#numbering;
-        let sorted = numbering === null ? null : numbering.sort(nodes);
+        let sorted = numbering === null ? null : numbering.sort(nodes, this.strict);
         // Caller code keeps invalidating the numbering (see userCodeRan): a few nodes are ordered locally, because
         // numbering the whole tree for each of them is what made such an evaluation quadratic.
         if (sorted === null && numbering === null && !this.pure && nodes.length <= FEW_NODES) {
@@ -277,7 +278,7 @@ export class EvalState {
         if (sorted === null) {
             // No numbering yet, or it is for another tree.
             numbering = this.numbered(first);
-            sorted = numbering.sort(nodes);
+            sorted = numbering.sort(nodes, this.strict);
             if (this.settings.keepNumbering) this.#numbering = numbering;
         }
         if (sorted === null) throw new XPathOrderError();
@@ -358,6 +359,8 @@ export class EvalState {
     }
 
     #lookUpPrefix(prefix: string, node: DomNode): string {
+        // The `xml` prefix is bound to the XML namespace in every context (XML Names, which XPath 1.0 section 2.3 relies on).
+        if (this.strict && prefix === 'xml') return XML_NAMESPACE_URI;
         const uri = this.settings.namespaces(prefix, node, (units) => {
             this.charge(units);
         });
@@ -387,6 +390,20 @@ export class EvalState {
 export function stringValueOf(node: DomNode, state?: EvalState): string {
     const type = node.nodeType;
     if (type === ATTRIBUTE_NODE) return node.value || (node.nodeValue ?? '');
+    if ((type === TEXT_NODE || type === CDATA_SECTION_NODE) && state?.strict === true) {
+        // Section 5.7 (strict): the text node of the data model is the whole run of adjacent Text and CDATASection
+        // siblings, and the node that stands for it is the first (see continuesATextRun in steps.ts).
+        let run = node.nodeValue ?? '';
+        let count = 1;
+        for (let next = node.nextSibling; next != null; next = next.nextSibling) {
+            if (next.nodeType !== TEXT_NODE && next.nodeType !== CDATA_SECTION_NODE) break;
+            run += next.nodeValue ?? '';
+            count++;
+            if (run.length > MAX_STRING_LENGTH) throw new XPathLimitError('a text node is too long');
+        }
+        state.charge(count + (run.length >> 4));
+        return run;
+    }
     if (type !== ELEMENT_NODE && type !== DOCUMENT_NODE && type !== DOCUMENT_FRAGMENT_NODE) return node.nodeValue ?? '';
     let text = '';
     let visits = 1;

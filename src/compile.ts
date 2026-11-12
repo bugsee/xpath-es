@@ -1,10 +1,9 @@
 // AST -> closures. Each node becomes one function `(focus, state) => value`; evaluation is then a tree of direct
-// calls with no dispatch on node kind. The alternative (walking the AST with a switch) is in interpret.ts for the
-// measurement in bench/micro.ts.
+// calls with no dispatch on node kind.
 
 import type { BinaryOp, Expr, StaticType, Step } from './ast.ts';
 import { compareValues } from './compare.ts';
-import { DOCUMENT_NODE } from './dom.ts';
+import { DOCUMENT_NODE, treeRoot } from './dom.ts';
 import type { DomNode } from './dom.ts';
 import { XPathContextError, XPathResolveError, XPathTypeError } from './errors.ts';
 import { compileCoreFunction, CORE_RETURN_TYPES } from './functions.ts';
@@ -113,7 +112,7 @@ function compileStep(step: Step): CompiledStep {
     const predicates = step.predicates.map(compilePredicate);
     return {
         axis: step.axis,
-        match: compileNodeTest(step.test),
+        match: compileNodeTest(step.test, step.axis),
         predicates,
         positional: predicates.some((p) => p.positional)
     };
@@ -123,8 +122,11 @@ export function isDescendantOrSelfNode(step: Step): boolean {
     return step.axis === 'descendant-or-self' && step.test.kind === 'node' && step.predicates.length === 0;
 }
 
-export function documentRoot(node: DomNode): DomNode {
+export function documentRoot(node: DomNode, strict = false): DomNode {
     if (node.nodeType === DOCUMENT_NODE) return node;
+    // Section 2: `/` is the root of the tree that contains the context node: for a detached element or a document
+    // fragment, the topmost ancestor, not the document the node was created by (upstream mode, Q-ROOT).
+    if (strict) return treeRoot(node);
     // Q-ROOT: `/` is the owner document even for a node that is detached from it.
     const owner = node.ownerDocument;
     if (owner != null) return owner;
@@ -158,7 +160,7 @@ function compilePath(expr: Extract<Expr, { kind: 'path' }>): Compiled {
                         : 'Context node not found when evaluating XPath step'
                 );
             }
-            list.nodes = [absolute ? documentRoot(focus.node) : focus.node];
+            list.nodes = [absolute ? documentRoot(focus.node, state.strict) : focus.node];
         } else {
             const value = filter(focus, state);
             if (!(value instanceof NodeSet)) {
@@ -413,7 +415,7 @@ function remembered(run: Compiled): Compiled {
     const site = {};
     return (focus, state) => {
         if (!state.pure || focus.node === NO_NODE) return run(focus, state);
-        const root = documentRoot(focus.node);
+        const root = documentRoot(focus.node, state.strict);
         const answers = state.answersOf(site);
         const known = answers.get(root);
         if (known !== undefined) return known;

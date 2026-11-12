@@ -349,7 +349,15 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
         case 'local-name':
             return (focus, state) => {
                 const node = targetNode(name, args, focus, state);
-                return node === null ? '' : node.localName || node.target || node.nodeName || '';
+                if (node === null) return '';
+                // Section 4.1: only an element, attribute, processing instruction or namespace node has an expanded name;
+                // upstream falls back to the node's name (`#text`, `#document`, `#comment`) for the others.
+                if (state.strict) {
+                    const type = node.nodeType;
+                    if (type === PROCESSING_INSTRUCTION_NODE) return node.target || node.nodeName || '';
+                    if (type !== ELEMENT_NODE && type !== ATTRIBUTE_NODE && type !== NAMESPACE_NODE) return '';
+                }
+                return node.localName || node.target || node.nodeName || '';
             };
         case 'namespace-uri':
             return (focus, state) => targetNode(name, args, focus, state)?.namespaceURI || '';

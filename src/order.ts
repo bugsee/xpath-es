@@ -97,6 +97,8 @@ export class Numbering {
             if (base === undefined) return undefined;
             const count = node.ownerElement.attributes?.length ?? 0;
             // `xml` first, then the bindings declared on the element in attribute order, then inherited ones.
+            // Strict mode's nodes carry their place among the element's namespace nodes: distinct, and increasing with it.
+            if (node.ordinal >= 0) return base + 0.25 * (1 - 1 / (node.ordinal + 2));
             const slot =
                 node.nodeValue === XML_NAMESPACE_URI ? 0 : node.localIndex >= 0 ? node.localIndex + 1 : count + 1;
             return base + (0.25 * (slot + 1)) / (count + 3);
@@ -122,7 +124,7 @@ export class Numbering {
      * The input must be free of duplicates. O(n log n) on numeric keys, or O(N + n) by a sweep when n is a large
      * share of the tree (N tree nodes).
      */
-    sort(nodes: readonly DomNode[]): DomNode[] | null {
+    sort(nodes: readonly DomNode[], strict = false): DomNode[] | null {
         const n = nodes.length;
         const keys = new Float64Array(n);
         let integral = true;
@@ -191,7 +193,8 @@ export class Numbering {
                 if (node !== undefined) out.push(node);
             }
         }
-        if (namespaces) assertNamespaceOrderDefined(out);
+        // Upstream mode mirrors upstream's failure to order two inherited bindings; strict mode orders them (section 5).
+        if (namespaces && !strict) assertNamespaceOrderDefined(out);
         return out;
     }
 

@@ -15,3 +15,5 @@ docs/decisions/
 /dist/
 /.build-cjs/
 /dist-tests/
+
+scratch-out/

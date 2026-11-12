@@ -71,6 +71,9 @@ jobs:
         run: |
           seed="$(date +%Y%m%d)"
           node test/fuzz-expr.ts ${{ matrix.dom }} 150 100 "$seed" ns 5000
+      - name: Strict mode against the independent reference (report; these DOMs do not gate)
+        continue-on-error: true
+        run: node test/strict-oracle.ts ${{ matrix.dom }} 100 150 "$(date +%Y%m%d)" ns
 
   # The bugsee/xpath fork (the production fix today), judged the way it always was.
   fork:
@@ -97,6 +100,8 @@ jobs:
       - run: CANDIDATE=./src/index.ts HOSTILE_ENGINE_CASES=1 HOSTILE_STRICT=1 node test/hostile.ts
       - run: node test/mode-agreement.ts 200 150 "$(date +%Y%m%d)"
       - run: node test/strict-axes-fuzz.ts 150 150 "$(date +%Y%m%d)" xmldom08
+      - run: node test/strict-oracle.ts xmldom08 200 150 "$(date +%Y%m%d)" ns
+      - run: node test/strict-oracle.ts xmldom09 150 150 "$(date +%Y%m%d)" ns
       - run: node test/strict-axes-fuzz.ts 100 150 "$(date +%Y%m%d)" xmldom09
       - run: npm run test:hostile
       - run: npm run fixtures

@@ -11,7 +11,7 @@
 
 import { documentText } from './generate.ts';
 import { allNodes, describe, errorText, isDomName, loadDom, makeRandom } from './harness.ts';
-import { select, XPathError, XPathProgram } from '../src/index.ts';
+import { useNamespaces, XPathError, XPathProgram } from '../src/index.ts';
 
 const documents = Number(process.argv[2] ?? 60);
 const perDocument = Number(process.argv[3] ?? 150);
@@ -19,6 +19,9 @@ const random = makeRandom(Number(process.argv[4] ?? 7));
 const domName = process.argv[5] ?? 'xmldom08';
 if (!isDomName(domName)) throw new Error(`unknown DOM ${domName}`);
 const parse = loadDom(domName);
+// The prefixes the generated documents declare (`p:*` and `p:d` are in the vocabulary): without a resolver every one of those
+// is an error on both sides, which compares nothing.
+const select = useNamespaces({ p: 'urn:p', q: 'urn:q' }, { mode: 'strict' });
 
 const pick = (items: readonly string[]): string => items[Math.floor(random() * items.length)] ?? '';
 
@@ -144,7 +147,7 @@ function outcome(
 ): string {
     XPathProgram.forceSlowPath = slow;
     try {
-        return describe(select(text, node, false, { mode: 'strict' }), index);
+        return describe(select(text, node), index);
     } catch (error) {
         return error instanceof XPathError ? `ERR ${error.code}` : `ERR other ${errorText(error)}`;
     } finally {
@@ -156,6 +159,7 @@ function outcome(
 let compared = 0;
 let differences = 0;
 let errors = 0;
+const refusedSamples: string[] = [];
 let refusedFast = 0;
 let refusedSlow = 0;
 const shown: string[] = [];
@@ -183,6 +187,8 @@ for (let d = 0; d < documents; d++) {
             // A limit (work budget, time, size) is a policy of the engine, and the two paths cost different amounts: the
             // pair is not an answer to compare. Counted, so that a path that refuses far more often shows.
             const refused = (text: string): boolean => /^ERR (BUDGET|TIMEOUT|LIMIT)/.test(text);
+            if (refused(fast) && !refused(slow) && refusedSamples.length < 3)
+                refusedSamples.push(`${text}  @${node.nodeName}: ${fast}`);
             if (refused(fast)) refusedFast++;
             if (refused(slow)) refusedSlow++;
             if (refused(fast) || refused(slow)) continue;
@@ -200,5 +206,9 @@ for (let d = 0; d < documents; d++) {
 console.log(
     `strict following/preceding, fast path against slow path (${domName}): ${compared} comparisons, ${errors} errors (the same on both), ${differences} differences; refused by a limit: ${refusedFast} fast, ${refusedSlow} slow, ${Date.now() - started} ms`
 );
+for (const sample of refusedSamples) console.log(`  refused only by the fast path: ${sample}`);
 for (const sample of shown) console.log(`  ${sample}`);
-process.exitCode = compared === 0 || differences > 0 ? 1 : 0;
+// Errors on both sides compare nothing: a large share of them means the generator or the resolver is wrong.
+const tooManyErrors = errors > compared / 10;
+if (tooManyErrors) console.log(`more than 10% of the comparisons are errors on both sides (${errors} of ${compared})`);
+process.exitCode = compared === 0 || differences > 0 || tooManyErrors ? 1 : 0;

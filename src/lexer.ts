@@ -74,6 +74,10 @@ const OPERAND_EXPECTED_AFTER: ReadonlySet<TokenKind> = new Set<TokenKind>([
     '>='
 ]);
 
+// Strict (section 3.7: "the preceding token is not one of @, ::, (, [, , or an Operator"): `,` is such a token, and so is
+// `$` (what follows it is a variable's name, never an operator).
+const OPERAND_EXPECTED_STRICT: ReadonlySet<TokenKind> = new Set<TokenKind>([...OPERAND_EXPECTED_AFTER, ',', '$']);
+
 const NAME_START = /[\p{L}_]/u;
 const NAME_CHAR = /[\p{L}\p{N}\p{M}._\-·]/u;
 
@@ -96,6 +100,10 @@ function isNameChar(code: number, ch: string): boolean {
     return NAME_CHAR.test(ch);
 }
 
+function isSpaceCode(code: number): boolean {
+    return code === 32 || code === 9 || code === 13 || code === 10;
+}
+
 function isDigit(code: number): boolean {
     return code >= 48 && code <= 57;
 }
@@ -105,6 +113,14 @@ export function tokenize(source: string, strict: boolean = false): Token[] {
     const n = source.length;
     let pos = 0;
     let previous: TokenKind | null = null;
+    const operandExpectedAfter = strict ? OPERAND_EXPECTED_STRICT : OPERAND_EXPECTED_AFTER;
+    // Strict: white space may separate a name from the `(` or `::` after it (it is not a token); upstream mode looks at the
+    // next character only (Q-LEX-4).
+    const afterSpace = (from: number): number => {
+        let at = from;
+        if (strict) while (at < n && isSpaceCode(source.charCodeAt(at))) at++;
+        return at;
+    };
     const push = (kind: TokenKind, value: string): void => {
         tokens.push({ kind, value });
         previous = kind;
@@ -174,7 +190,7 @@ export function tokenize(source: string, strict: boolean = false): Token[] {
             }
             case '*':
                 // `previous` is null only before the first token.
-                if (previous !== null && !OPERAND_EXPECTED_AFTER.has(previous)) push('multiply', ch);
+                if (previous !== null && !operandExpectedAfter.has(previous)) push('multiply', ch);
                 else push('star', ch);
                 pos++;
                 continue;
@@ -217,9 +233,10 @@ export function tokenize(source: string, strict: boolean = false): Token[] {
         if (isDigit(code)) {
             let end = pos + 1;
             while (isDigit(source.charCodeAt(end))) end++;
-            // Q-LEX-3: `1.` is not a Number in upstream (the grammar says it is); the dot is lexed on its own.
-            if (source.charCodeAt(end) === 46 && isDigit(source.charCodeAt(end + 1))) {
-                end += 2;
+            // Q-LEX-3: `1.` is not a Number in upstream (the grammar says it is); the dot is lexed on its own. Strict:
+            // Number ::= Digits ('.' Digits?)?
+            if (source.charCodeAt(end) === 46 && (strict || isDigit(source.charCodeAt(end + 1)))) {
+                end += 1;
                 while (isDigit(source.charCodeAt(end))) end++;
             }
             push('number', source.slice(pos, end));
@@ -231,7 +248,7 @@ export function tokenize(source: string, strict: boolean = false): Token[] {
             let name = source.slice(pos, end);
             if (
                 previous !== null &&
-                !OPERAND_EXPECTED_AFTER.has(previous) &&
+                !operandExpectedAfter.has(previous) &&
                 (name === 'and' || name === 'or' || name === 'mod' || name === 'div')
             ) {
                 push(name, name);
@@ -249,7 +266,7 @@ export function tokenize(source: string, strict: boolean = false): Token[] {
                     end = nameEnd(end + 2);
                     name = source.slice(pos, end);
                     // Q-LEX-4: no white space is skipped between a name and `(` or `::` (the grammar allows it).
-                    push(source.charAt(end) === '(' ? 'function' : 'qname', name);
+                    push(source.charAt(afterSpace(end)) === '(' ? 'function' : 'qname', name);
                     pos = end;
                     continue;
                 }
@@ -259,11 +276,17 @@ export function tokenize(source: string, strict: boolean = false): Token[] {
                     continue;
                 }
             }
-            if (source.charAt(end) === '(') {
+            const paren = afterSpace(end);
+            if (source.charAt(paren) === '(') {
                 if (name === 'comment' || name === 'text' || name === 'node') push('node-type', name);
                 else if (name === 'processing-instruction')
-                    push(source.charAt(end + 1) === ')' ? 'node-type' : 'pi-literal', name);
+                    push(source.charAt(afterSpace(paren + 1)) === ')' ? 'node-type' : 'pi-literal', name);
                 else push('function', name);
+            } else if (strict && source.startsWith('::', afterSpace(end))) {
+                // `child :: b`: an axis name followed, after white space, by `::`.
+                push('axis', name);
+                pos = afterSpace(end);
+                continue;
             } else {
                 push('qname', name);
             }

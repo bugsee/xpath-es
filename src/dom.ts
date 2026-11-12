@@ -108,8 +108,21 @@ export class NamespaceNode implements DomNode {
     readonly baseNode: DomNode | null;
     /** Index of `baseNode` in `ownerElement.attributes`, or -1 when it is declared on an ancestor (or is `xml`). */
     readonly localIndex: number;
+    /**
+     * Strict mode: the place of this binding among the element's namespace nodes (`xml` first, then the declarations of
+     * the element, then those inherited from its parent outwards), which is their document order. -1 for the nodes upstream
+     * mode makes, whose order is as upstream's (and undefined between two inherited ones).
+     */
+    readonly ordinal: number;
 
-    constructor(prefix: string, baseNode: DomNode | null, uri: string, owner: DomNode, localIndex: number) {
+    constructor(
+        prefix: string,
+        baseNode: DomNode | null,
+        uri: string,
+        owner: DomNode,
+        localIndex: number,
+        ordinal = -1
+    ) {
         this.nodeName = prefix;
         this.prefix = prefix;
         this.localName = prefix;
@@ -118,6 +131,7 @@ export class NamespaceNode implements DomNode {
         this.ownerDocument = owner.ownerDocument;
         this.baseNode = baseNode;
         this.localIndex = localIndex;
+        this.ordinal = ordinal;
     }
 
     toString(): string {

@@ -15,6 +15,7 @@ import {
     ATTRIBUTE_NODE,
     CDATA_SECTION_NODE,
     COMMENT_NODE,
+    DOCUMENT_FRAGMENT_NODE,
     DOCUMENT_NODE,
     ELEMENT_NODE,
     NAMESPACE_NODE,
@@ -60,41 +61,87 @@ function hasPrefix(node: DomNode): boolean {
     return Boolean(node.prefix) || node.nodeName.includes(':');
 }
 
+/** The principal node type of an axis (section 2.3): what `*` and a name select on it. */
+function principalNodeType(axis: Axis): number {
+    return axis === 'attribute' ? ATTRIBUTE_NODE : axis === 'namespace' ? NAMESPACE_NODE : ELEMENT_NODE;
+}
+
+const isTextLike = (node: DomNode | null | undefined): boolean =>
+    node != null && (node.nodeType === TEXT_NODE || node.nodeType === CDATA_SECTION_NODE);
+
 /**
- * Q-TEST-1: a name test accepts elements, attributes and namespace nodes on every axis (upstream has no notion of
- * the principal node type), `node()` does not accept namespace nodes, and an unprefixed name matches only a node
- * with no namespace URI (or, with allowAnyNamespaceForNoPrefix, any node without a prefix).
+ * Strict (section 5.7): a run of adjacent Text and CDATASection siblings is one text node of the data model. The node
+ * that stands for the run is its first, so that a node keeps its identity and its place in document order, and every
+ * other node of the run is not a node of the model (its string-value is part of the first one's, see stringValueOf).
  */
-export function compileNodeTest(test: NodeTest): Matcher {
+function continuesATextRun(node: DomNode): boolean {
+    return isTextLike(node) && isTextLike(node.previousSibling);
+}
+
+/** The XML declaration is not a node (section 5): some DOMs (xmldom) keep it as a processing instruction. */
+function isXmlDeclaration(node: DomNode): boolean {
+    return node.nodeType === PROCESSING_INSTRUCTION_NODE && (node.target || node.nodeName) === 'xml';
+}
+
+/**
+ * Q-TEST-1 (upstream mode): a name test accepts elements, attributes and namespace nodes on every axis (upstream has no
+ * notion of the principal node type), `node()` does not accept namespace nodes, and an unprefixed name matches only a
+ * node with no namespace URI (or, with allowAnyNamespaceForNoPrefix, any node without a prefix).
+ * Strict mode follows section 2.3: `*` and a name select the principal node type of the axis (attributes on the
+ * attribute axis, namespace nodes on the namespace axis, elements on every other), and `node()` accepts every node of
+ * the data model, namespace nodes and a document fragment (the root of a detached tree) included.
+ */
+export function compileNodeTest(test: NodeTest, axis: Axis): Matcher {
+    const principal = principalNodeType(axis);
     switch (test.kind) {
         case 'any':
-            return (node) => {
+            return (node, state) => {
                 const type = node.nodeType;
+                if (state.strict) return type === principal;
                 return type === ELEMENT_NODE || type === ATTRIBUTE_NODE || type === NAMESPACE_NODE;
             };
         case 'node':
-            return (node) => {
+            return (node, state) => {
                 const type = node.nodeType;
+                if (state.strict) {
+                    return (
+                        (type === ATTRIBUTE_NODE ||
+                            type === ELEMENT_NODE ||
+                            type === NAMESPACE_NODE ||
+                            type === DOCUMENT_NODE ||
+                            type === DOCUMENT_FRAGMENT_NODE ||
+                            type === COMMENT_NODE ||
+                            ((type === TEXT_NODE || type === CDATA_SECTION_NODE) && !continuesATextRun(node)) ||
+                            type === PROCESSING_INSTRUCTION_NODE) &&
+                        !isXmlDeclaration(node)
+                    );
+                }
                 return (
                     (type >= ELEMENT_NODE && type <= CDATA_SECTION_NODE) ||
                     (type >= PROCESSING_INSTRUCTION_NODE && type <= DOCUMENT_NODE)
                 );
             };
         case 'text':
-            return (node) => node.nodeType === TEXT_NODE || node.nodeType === CDATA_SECTION_NODE;
+            return (node, state) =>
+                (node.nodeType === TEXT_NODE || node.nodeType === CDATA_SECTION_NODE) &&
+                !(state.strict && continuesATextRun(node));
         case 'comment':
             return (node) => node.nodeType === COMMENT_NODE;
         case 'pi':
-            return (node) => node.nodeType === PROCESSING_INSTRUCTION_NODE;
+            return (node, state) =>
+                node.nodeType === PROCESSING_INSTRUCTION_NODE && !(state.strict && isXmlDeclaration(node));
         case 'piTarget': {
             const { target } = test;
-            return (node) => node.nodeType === PROCESSING_INSTRUCTION_NODE && (node.target || node.nodeName) === target;
+            return (node, state) =>
+                node.nodeType === PROCESSING_INSTRUCTION_NODE &&
+                (node.target || node.nodeName) === target &&
+                !(state.strict && isXmlDeclaration(node));
         }
         case 'prefixAny': {
             const { prefix } = test;
             return (node, state) => {
                 const type = node.nodeType;
-                if (type !== ELEMENT_NODE && type !== ATTRIBUTE_NODE) return false;
+                if (state.strict ? type !== principal : type !== ELEMENT_NODE && type !== ATTRIBUTE_NODE) return false;
                 return state.resolveNameTestPrefix(prefix) === (node.namespaceURI || '');
             };
         }
@@ -105,17 +152,21 @@ export function compileNodeTest(test: NodeTest): Matcher {
                 const actual = node.localName || node.nodeName;
                 return state.caseInsensitive ? actual.toLowerCase() === lower : actual === localName;
             };
+            const kindMatches = (node: DomNode, state: EvalState): boolean => {
+                const type = node.nodeType;
+                return state.strict
+                    ? type === principal
+                    : type === ELEMENT_NODE || type === ATTRIBUTE_NODE || type === NAMESPACE_NODE;
+            };
             if (prefix === null) {
                 return (node, state) => {
-                    const type = node.nodeType;
-                    if (type !== ELEMENT_NODE && type !== ATTRIBUTE_NODE && type !== NAMESPACE_NODE) return false;
+                    if (!kindMatches(node, state)) return false;
                     if (node.namespaceURI && !(state.allowAnyNamespaceForNoPrefix && !hasPrefix(node))) return false;
                     return localMatches(node, state);
                 };
             }
             return (node, state) => {
-                const type = node.nodeType;
-                if (type !== ELEMENT_NODE && type !== ATTRIBUTE_NODE && type !== NAMESPACE_NODE) return false;
+                if (!kindMatches(node, state)) return false;
                 if (state.resolveNameTestPrefix(prefix) !== (node.namespaceURI || '')) return false;
                 return localMatches(node, state);
             };
@@ -263,11 +314,11 @@ function namespaceNodes(element: DomNode, state: EvalState): NamespaceNode[] {
     if (state.strict) {
         // Section 5.4: one node per binding in scope, made once (a node-set holds it once however it is reached), and
         // no node for `xmlns=""`, which says there is no default namespace.
-        out.push(state.internedNamespaceNode(element, 'xml', null, XML_NAMESPACE_URI, -1));
+        out.push(state.internedNamespaceNode(element, 'xml', null, XML_NAMESPACE_URI, -1, 0));
         for (const { prefix, attribute, local } of declarations) {
             const uri = attribute.value ?? '';
             if (prefix === '' && uri === '') continue;
-            out.push(state.internedNamespaceNode(element, prefix, attribute, uri, local));
+            out.push(state.internedNamespaceNode(element, prefix, attribute, uri, local, out.length));
         }
         return out;
     }
@@ -712,7 +763,9 @@ function applyPerContext(step: CompiledStep, list: NodeList, state: EvalState): 
             const candidates: DomNode[] = [];
             axisOf(step, context, state, candidates);
             // Upstream sorts the candidates before it applies the predicates, which is where it fails on namespace nodes.
-            if (axis === 'namespace' && predicates.length > 0 && candidates.length > 1) state.sort(candidates);
+            // (Strict mode makes them in document order already: xml, then the element's declarations, then the inherited.)
+            if (axis === 'namespace' && !state.strict && predicates.length > 0 && candidates.length > 1)
+                state.sort(candidates);
             kept = filterByPredicates(candidates, predicates, 0, focus, state);
         }
         for (let k = 0; k < kept.length; k++) {
@@ -905,7 +958,7 @@ function applyToSet(step: CompiledStep, list: NodeList, state: EvalState): void 
                 // Upstream sorts the nodes that pass the node test before it applies the predicates, which is where it
                 // fails on namespace nodes (Q-NS-ORDER): the test first, then the sort, then the predicates.
                 const candidates = namespaceNodes(context, state).filter((node) => step.match(node, state));
-                if (step.predicates.length > 0 && candidates.length > 1) state.sort(candidates);
+                if (!state.strict && step.predicates.length > 0 && candidates.length > 1) state.sort(candidates);
                 for (const node of candidates) if (passesAll(node, step, focus, state)) out.push(node);
             }
             list.ordered = false;
@@ -1051,7 +1104,7 @@ function precedingOfSet(
     visits.flush();
 }
 
-const isNodeTestNode = compileNodeTest({ kind: 'node' });
+const isNodeTestNode = compileNodeTest({ kind: 'node' }, 'child');
 
 /**
  * `//T` and `//@T`: the pair `descendant-or-self::node()/child::T` (or `/attribute::T`) in one ordered walk, when T's
@@ -1110,6 +1163,10 @@ export function applyStep(step: CompiledStep, list: NodeList, state: EvalState):
     if (list.nodes.length === 0) return;
     // Strict: the preceding axis excludes ancestors, which the one-sweep set form (upstream's meaning of the axis) does not.
     if (step.positional || !state.pure) applyPerContext(step, list, state);
+    // One context node: the walk from that node onwards is all there is to read; the one-sweep form starts at the root of
+    // the tree, which costs the whole document however near the end the context node is (it made `count(following::*)` in
+    // a predicate, evaluated for thousands of candidates, quadratic).
+    else if (step.axis === 'following' && list.nodes.length === 1) applyPerContext(step, list, state);
     else if (state.strict && step.axis === 'preceding') {
         // Strict preceding excludes ancestors, which the one-sweep set form (upstream's meaning of the axis) does not.
         // One context stays on the per-context walk (it numbers nothing), and so does an evaluation with a namespace
