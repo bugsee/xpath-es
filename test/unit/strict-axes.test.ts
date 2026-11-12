@@ -77,6 +77,12 @@ void test('contexts inside other contexts, duplicates, and a mix of kinds', () =
     assert.equal(ids('//b/preceding::*[1.5]', DOC), '');
 });
 
+void test('preceding:: of a node-set never holds the document node or the root: they are ancestors (review P2)', () => {
+    // The last context is b3, a child of the root: before it, and not its ancestors, are a1 b1 c1 a2 b2.
+    assert.equal(ids('(//b | //c)/preceding::node()', DOC), 'a1 b1 c1 a2 b2');
+    assert.equal(ids('(//a | //b)/preceding::node()', DOC), 'a1 b1 c1 a2 b2');
+});
+
 void test('the document node and the root element as contexts', () => {
     assert.equal(ids('//r/following::*[1]', DOC), '');
     assert.equal(ids('//r/preceding::*[last()]', DOC), '');

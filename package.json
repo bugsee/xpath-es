@@ -85,7 +85,7 @@
         "test:wrapping": "CANDIDATE=./src/index.ts node bench/saml-wrapping.ts",
         "test:mutants": "node test/mutation-testing.ts",
         "test:dist": "node --test test/dist/*.test.mjs",
-        "test:dist:types": "node node_modules/typescript-7/bin/tsc -p test/dist/types/tsconfig.json",
+        "test:dist:types": "node node_modules/typescript-7/bin/tsc -p test/dist/types/tsconfig.json && node node_modules/typescript-7/bin/tsc -p test/dist/types/upstream-compat/tsconfig.ours.json && node node_modules/typescript-7/bin/tsc -p test/dist/types/upstream-compat/tsconfig.upstream.json",
         "test:browser": "node test/browser/run.mjs",
         "test:built:unit": "XPATH_ES_UNIT_ENGINE=./dist/index.cjs node --test dist-tests/test/unit/*.test.js",
         "test:built:differential": "CANDIDATE=./dist/index.cjs CLASSIFY=ns-duplicate node dist-tests/test/fuzz.js xmldom08 80 41 all && CANDIDATE=./dist/index.cjs CLASSIFY=all node dist-tests/test/fuzz.js xmldom09 60 42 all && CANDIDATE=./dist/index.cjs node dist-tests/test/mutation.js && CANDIDATE=./dist/index.cjs CLASSIFY=ns-duplicate node dist-tests/test/fuzz-expr.js xmldom08 30 100 43 ns 5000 && CANDIDATE=./dist/index.cjs CLASSIFY=all node dist-tests/test/fuzz-expr.js xmldom09 30 100 44 ns 5000",

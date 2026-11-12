@@ -119,6 +119,22 @@ test('the clock falls back to Date.now() when there is no usable performance obj
     }
 });
 
+test('a namespace node made by one build is recognised by the other (a brand, not instanceof)', () => {
+    // The bindings are declared on `a` itself, so that upstream's own ordering (kept by the node-set class) can order them.
+    const doc = parseXml('<r><a xmlns:p="urn:p" xmlns:q="urn:q"/></r>');
+    // Nodes made by the ES module build, put into a node-set of the CommonJS build and sorted there.
+    const fromEsm = esm.select('/r/a/namespace::*', doc);
+    assert.equal(fromEsm.length, 3);
+    const set = new cjs.XNodeSet();
+    set.addArray(fromEsm);
+    set.add(doc.documentElement);
+    assert.equal(set.toArray().length, 4);
+    assert.equal(cjs.select('/r/a/namespace::*', doc).length, 3);
+    const viaCjs = cjs.select('/r/a/namespace::* | /r/a', doc);
+    assert.equal(viaCjs.length, 4);
+    assert.equal(viaCjs[0].nodeName, 'a');
+});
+
 test('an error from one build is recognised by the other: isXPathError, code, and the documented instanceof caveat', () => {
     // The ES module build and the CommonJS build are two copies of the classes: `instanceof` is false across them.
     const doc = parseXml(XML);

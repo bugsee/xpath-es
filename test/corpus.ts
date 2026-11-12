@@ -532,7 +532,19 @@ export const QUIRK_PROBES: readonly string[] = [
     '//c[number() = 12]',
     '//c[number(.) = 12]',
     '//c[string-length() = 4]',
-    '//*[string-length(.) > 1]'
+    '//*[string-length(.) > 1]',
+    // A zero-argument function that reads the context node, next to an absolute path in one predicate: the second must not be
+    // taken for a subexpression of the document alone and evaluated once (the hoisting of document-only subexpressions).
+    '//*[string() = string(//a)]',
+    "//*[normalize-space() = concat(//b, '')]",
+    '//*[name() = name(//c)]',
+    '//*[local-name() = local-name(//a)]',
+    '//*[namespace-uri() = namespace-uri(//p:d)]',
+    '//*[string-length() = string-length(//c)]',
+    '//*[number() = number(//c)]',
+    '//*[string() = //c]',
+    '//*[. = //c]',
+    '//*[contains(string(), string(//a)) and name() != name(//b)]'
 ];
 
 export const CORPUS: readonly string[] = [...new Set([...CONSUMER_EXPRESSIONS, ...FUZZ_QUERIES, ...QUIRK_PROBES])];

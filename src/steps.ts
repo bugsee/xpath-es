@@ -592,8 +592,9 @@ function lastOnAxis(step: CompiledStep, context: DomNode, state: EvalState): Dom
             }
             break;
         case 'following-sibling':
+            // An attribute or a namespace node has no siblings, whatever a DOM answers for its parentNode.
             for (
-                let node = context.parentNode?.lastChild;
+                let node = isTreeNode(context) ? context.parentNode?.lastChild : null;
                 node != null && node !== context;
                 node = node.previousSibling
             ) {
@@ -606,7 +607,11 @@ function lastOnAxis(step: CompiledStep, context: DomNode, state: EvalState): Dom
             break;
         case 'preceding-sibling':
             // Axis order is nearest first, so the last is the first sibling of the parent that matches.
-            for (let node = context.parentNode?.firstChild; node != null && node !== context; node = node.nextSibling) {
+            for (
+                let node = isTreeNode(context) ? context.parentNode?.firstChild : null;
+                node != null && node !== context;
+                node = node.nextSibling
+            ) {
                 visits.one();
                 if (match(node, state)) {
                     found = node;

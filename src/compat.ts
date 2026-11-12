@@ -2,8 +2,11 @@
 // arguments, the same results. Only what is needed to measure and fuzz the engine against upstream is here;
 // the rest of upstream's surface is not implemented.
 //
-// Typing note: upstream's declarations use lib.dom's `Node`. This entry uses the structural `DomNode`, which every
-// `Node` is assignable to; results come back as `DomNode` and the `is*` guards narrow them.
+// Typing note: upstream's declarations type results as lib.dom's `Node` (and `Element`, `Attr`, ... for the guards). The
+// engine's own types are structural (`DomNode`), and this package's sources are compiled without the DOM library, so the
+// result types below are looked up on `globalThis`: where the consumer's program has the DOM library they are lib.dom's
+// interfaces (code written against upstream's declarations compiles unchanged), where it has not they are `DomNode`.
+// Parameters keep the structural type, which every lib.dom `Node` is assignable to.
 
 import {
     ATTRIBUTE_NODE,
@@ -26,12 +29,40 @@ import type { RawEvaluateOptions } from './program.ts';
 import { NodeSet, numberToString, stringToNumber, stringValueOf, toNumberValue } from './runtime.ts';
 import type { CustomFunction, EvalState, FunctionLookup, NamespaceLookup, VariableLookup, XValue } from './runtime.ts';
 
-export type SelectedValue = DomNode | string | number | boolean | null | undefined;
-export type SelectReturnType = DomNode[] | SelectedValue;
+type InstanceOf<Constructor, Fallback> = Constructor extends { readonly prototype: infer Instance }
+    ? Instance
+    : Fallback;
+export type LibNode = typeof globalThis extends { Node: infer C } ? InstanceOf<C, DomNode> : DomNode;
+export type LibElement = typeof globalThis extends { Element: infer C } ? InstanceOf<C, DomNode> : DomNode;
+export type LibAttr = typeof globalThis extends { Attr: infer C } ? InstanceOf<C, DomNode> : DomNode;
+export type LibText = typeof globalThis extends { Text: infer C } ? InstanceOf<C, DomNode> : DomNode;
+export type LibCDATASection = typeof globalThis extends { CDATASection: infer C } ? InstanceOf<C, DomNode> : DomNode;
+export type LibProcessingInstruction = typeof globalThis extends { ProcessingInstruction: infer C }
+    ? InstanceOf<C, DomNode>
+    : DomNode;
+export type LibComment = typeof globalThis extends { Comment: infer C } ? InstanceOf<C, DomNode> : DomNode;
+export type LibDocument = typeof globalThis extends { Document: infer C } ? InstanceOf<C, DomNode> : DomNode;
+export type LibDocumentType = typeof globalThis extends { DocumentType: infer C } ? InstanceOf<C, DomNode> : DomNode;
+export type LibDocumentFragment = typeof globalThis extends { DocumentFragment: infer C }
+    ? InstanceOf<C, DomNode>
+    : DomNode;
+
+// As upstream's declarations have them (a selection that finds nothing is `undefined` at run time, as upstream's is).
+export type SelectedValue = LibNode | string | number | boolean | null;
+export type SelectReturnType = LibNode[] | SelectedValue;
 export type SelectSingleReturnType = SelectedValue;
 
-export interface XPathNSResolver {
-    lookupNamespaceURI(prefix: string): string | null | undefined;
+/** As lib.dom's `XPathNSResolver`: a function of the prefix, or an object with `lookupNamespaceURI(prefix)`. */
+export type XPathNSResolver =
+    | ((prefix: string) => string | null | undefined)
+    | { lookupNamespaceURI(prefix: string): string | null | undefined };
+
+/** The lookup a resolver of either shape stands for; none when there is no resolver. */
+function lookupOf(resolver: XPathNSResolver | null | undefined): NamespaceLookup {
+    if (resolver == null) return () => null;
+    return typeof resolver === 'function'
+        ? (prefix) => resolver(prefix)
+        : (prefix) => resolver.lookupNamespaceURI(prefix);
 }
 
 export interface XPathSelect {
@@ -130,12 +161,12 @@ export class XNodeSet {
         return [...this.#members];
     }
 
-    toArray(): DomNode[] {
+    toArray(): LibNode[] {
         this.#sorted ??= sortInDocumentOrder([...this.#members]);
         return this.#sorted.slice();
     }
 
-    first(): DomNode | null {
+    first(): LibNode | null {
         return this.toArray()[0] ?? null;
     }
 
@@ -282,7 +313,7 @@ function runSelect(
 ): { readonly value: XValue; readonly state: EvalState } {
     const program = programFor(expression, options?.mode);
     const contextNode = contextNodeOf(node);
-    const namespaces: NamespaceLookup = resolver == null ? () => null : (prefix) => resolver.lookupNamespaceURI(prefix);
+    const namespaces: NamespaceLookup = lookupOf(resolver);
     return program.runRaw({
         node: contextNode,
         namespaces,
@@ -309,7 +340,7 @@ function selectOne(
     node: unknown,
     resolver: XPathNSResolver | null | undefined,
     options?: SelectOptions
-): SelectSingleReturnType {
+): SelectSingleReturnType | undefined {
     const { value, state } = runSelect(expression, node, resolver, options);
     return value instanceof NodeSet ? value.sorted(state)[0] : value;
 }
@@ -344,10 +375,9 @@ export function selectWithResolver(
     resolver?: XPathNSResolver | null,
     single?: boolean,
     options?: SelectOptions
-): SelectReturnType {
-    return single === true
-        ? selectOne(expression, node, resolver, options)
-        : selectAll(expression, node, resolver, options);
+): SelectReturnType | undefined {
+    // Truthiness, as upstream tests it (`select('//a', doc, 1)` is the first element).
+    return single ? selectOne(expression, node, resolver, options) : selectAll(expression, node, resolver, options);
 }
 
 export function select(
@@ -367,11 +397,17 @@ export function select(
     node?: DomNode | null,
     single?: boolean,
     options?: SelectOptions
-): SelectReturnType {
-    return single === true ? selectOne(expression, node, null, options) : selectAll(expression, node, null, options);
+): SelectReturnType | undefined {
+    // Truthiness, as upstream tests it.
+    return single ? selectOne(expression, node, null, options) : selectAll(expression, node, null, options);
 }
 
-export function select1(expression: string, node?: DomNode | null, options?: SelectOptions): SelectSingleReturnType {
+export function select1(expression: string, node?: DomNode | null, options?: SelectOptions): SelectSingleReturnType;
+export function select1(
+    expression: string,
+    node?: DomNode | null,
+    options?: SelectOptions
+): SelectSingleReturnType | undefined {
     return selectOne(expression, node, null, options);
 }
 
@@ -403,9 +439,10 @@ export function useNamespaces(mappings: Readonly<Record<string, string>>, defaul
         node?: DomNode | null,
         single?: boolean,
         options?: SelectOptions
-    ): SelectReturnType {
+    ): SelectReturnType | undefined {
         const effective = options ?? defaults;
-        return single === true
+        // Truthiness, as upstream tests it.
+        return single
             ? selectOne(expression, node, resolver, effective)
             : selectAll(expression, node, resolver, effective);
     }
@@ -565,13 +602,13 @@ export class XPathEvaluator {
         return value;
     }
 
-    select(options?: XPathEvaluateOptions): DomNode[] {
+    select(options?: XPathEvaluateOptions): LibNode[] {
         const { value, state } = this.#programFor(options).runRaw(toEngineOptions(options));
         if (!(value instanceof NodeSet)) throw new XPathTypeError(`Cannot convert ${typeof value} to nodeset`);
         return value.sorted(state).slice();
     }
 
-    select1(options?: XPathEvaluateOptions): DomNode | undefined {
+    select1(options?: XPathEvaluateOptions): LibNode | undefined {
         return this.select(options)[0];
     }
 }
@@ -684,7 +721,7 @@ export function evaluate(
         throw new XPathException(XPathException.INVALID_EXPRESSION_ERR, error);
     }
     const node = contextNodeOf(contextNode);
-    const namespaces: NamespaceLookup = resolver == null ? () => null : (prefix) => resolver.lookupNamespaceURI(prefix);
+    const namespaces: NamespaceLookup = lookupOf(resolver);
     const caseInsensitive = program.mode === 'strict' ? isHtmlDocument(node) : detectHtmlDom(node);
     const { value, state } = program.runRaw({ node, namespaces, caseInsensitive });
     // Strict: a node-set asked for as a number goes through the grammar of 4.4 (an empty node-set is NaN, `0x10` is
@@ -696,18 +733,19 @@ export function evaluate(
 
 // ---- guards ----
 
-export const isNodeLike: (value: unknown) => value is DomNode = isDomNode;
-export const isArrayOfNodes: (value: unknown) => value is DomNode[] = isDomNodeArray;
+export const isNodeLike: (value: unknown) => value is LibNode = isDomNode;
+export const isArrayOfNodes: (value: unknown) => value is LibNode[] = isDomNodeArray;
 const ofType =
     (type: number) =>
     (value: unknown): value is DomNode =>
         isDomNode(value) && value.nodeType === type;
-export const isElement: (value: unknown) => value is DomNode = ofType(ELEMENT_NODE);
-export const isAttribute: (value: unknown) => value is DomNode = ofType(ATTRIBUTE_NODE);
-export const isTextNode: (value: unknown) => value is DomNode = ofType(TEXT_NODE);
-export const isCDATASection: (value: unknown) => value is DomNode = ofType(CDATA_SECTION_NODE);
-export const isProcessingInstruction: (value: unknown) => value is DomNode = ofType(PROCESSING_INSTRUCTION_NODE);
-export const isComment: (value: unknown) => value is DomNode = ofType(COMMENT_NODE);
-export const isDocumentNode: (value: unknown) => value is DomNode = ofType(DOCUMENT_NODE);
-export const isDocumentTypeNode: (value: unknown) => value is DomNode = ofType(10);
-export const isDocumentFragment: (value: unknown) => value is DomNode = ofType(DOCUMENT_FRAGMENT_NODE);
+export const isElement: (value: unknown) => value is LibElement = ofType(ELEMENT_NODE);
+export const isAttribute: (value: unknown) => value is LibAttr = ofType(ATTRIBUTE_NODE);
+export const isTextNode: (value: unknown) => value is LibText = ofType(TEXT_NODE);
+export const isCDATASection: (value: unknown) => value is LibCDATASection = ofType(CDATA_SECTION_NODE);
+export const isProcessingInstruction: (value: unknown) => value is LibProcessingInstruction =
+    ofType(PROCESSING_INSTRUCTION_NODE);
+export const isComment: (value: unknown) => value is LibComment = ofType(COMMENT_NODE);
+export const isDocumentNode: (value: unknown) => value is LibDocument = ofType(DOCUMENT_NODE);
+export const isDocumentTypeNode: (value: unknown) => value is LibDocumentType = ofType(10);
+export const isDocumentFragment: (value: unknown) => value is LibDocumentFragment = ofType(DOCUMENT_FRAGMENT_NODE);

@@ -210,6 +210,10 @@ CommonJS, so a program that loads both has two copies of the classes and `instan
 Node >= 22.18 (the TypeScript sources run directly, by type stripping; `npm run build` makes the plain JavaScript in
 `dist/`, see [Build and compatibility](#build-and-compatibility)).
 
+The one dependency that is a release tarball (`xpath-fork`, a dev dependency) needs `allow-remote=root` under npm 12 (EALLOWREMOTE
+otherwise); the committed `.npmrc` sets it, and npm 10 and 11 ignore it. The integrity of the tarball is pinned in
+`package-lock.json`.
+
 ```sh
 npm ci
 npm run check            # tsc (TypeScript 7, every strict flag), oxlint (type-aware), oxfmt --check
@@ -219,6 +223,7 @@ npm run test:harness     # the harness tests itself on candidates whose verdict 
 npm run test:differential        # the engine against upstream xpath (documents, scenarios, random expressions)
 npm run test:differential:fork   # the bugsee/xpath fork against upstream (its expression fuzzer: test:fuzz-expr:fork)
 npm run test:hostile
+npm run test:oracle        # strict mode against the independent reference evaluator (test/strict-oracle.ts)
 npm run fixtures         # builds the signed SAML responses the benchmarks use (results/, not committed)
 npm run bench:hostile    # numbers, per engine
 npm run bench:consumers

@@ -3,7 +3,7 @@
 
 import type { BinaryOp, Expr, StaticType, Step } from './ast.ts';
 import { compareValues } from './compare.ts';
-import { DOCUMENT_NODE, treeRoot } from './dom.ts';
+import { ATTRIBUTE_NODE, DOCUMENT_NODE, NAMESPACE_NODE, treeRoot } from './dom.ts';
 import type { DomNode } from './dom.ts';
 import { XPathContextError, XPathResolveError, XPathTypeError } from './errors.ts';
 import { compileCoreFunction, CORE_RETURN_TYPES } from './functions.ts';
@@ -274,7 +274,9 @@ function compileSiblingCount(step: CompiledStep, fallback: Compiled, site: objec
     return (focus, state) => {
         const node = focus.node;
         const parent = node.parentNode;
-        if (!state.pure || parent == null) return fallback(focus, state);
+        // An attribute or a namespace node has no siblings, whatever a DOM answers for its parentNode.
+        if (!state.pure || parent == null || node.nodeType === ATTRIBUTE_NODE || node.nodeType === NAMESPACE_NODE)
+            return fallback(focus, state);
         let ranks = state.siteCaches.get(site);
         if (ranks === undefined) {
             ranks = new Map<DomNode, number>();
