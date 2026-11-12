@@ -305,7 +305,102 @@ function siblingCountStep(expr: Expr): Step | null {
     return step.axis === 'preceding-sibling' || step.axis === 'following-sibling' ? step : null;
 }
 
+/** Core functions that, called with no argument, read the context node. */
+const CONTEXT_DEFAULTING = new Set([
+    'string',
+    'number',
+    'normalize-space',
+    'string-length',
+    'name',
+    'local-name',
+    'namespace-uri'
+]);
+
+/**
+ * Does the value of the expression depend on nothing but the document (the root of the context node's tree)? No
+ * context node of its own, no position, no size, no variable, no function this engine does not know (caller code may
+ * be impure). `//b`, `count(//b) > 0`, `(//a)[1]/b` are; `b`, `position()`, `string()`, `$x` are not. Inner contexts do not
+ * count: a predicate inside a step sees the step's own nodes.
+ */
+export function dependsOnDocumentOnly(expr: Expr): boolean {
+    switch (expr.kind) {
+        case 'literal':
+        case 'number':
+            return true;
+        case 'variable':
+            return false;
+        case 'or':
+        case 'and':
+        case 'union':
+            return expr.operands.every(dependsOnDocumentOnly);
+        case 'chain':
+            return dependsOnDocumentOnly(expr.first) && expr.rest.every((link) => dependsOnDocumentOnly(link.operand));
+        case 'negate':
+            return dependsOnDocumentOnly(expr.operand);
+        case 'path':
+            return expr.filter === null ? expr.absolute : dependsOnDocumentOnly(expr.filter);
+        case 'call':
+            return (
+                isCoreCall(expr.name) &&
+                expr.name !== 'position' &&
+                expr.name !== 'last' &&
+                expr.name !== 'lang' &&
+                !(CONTEXT_DEFAULTING.has(expr.name) && expr.args.length === 0) &&
+                expr.args.every(dependsOnDocumentOnly)
+            );
+    }
+}
+
+/** Does evaluating the expression walk anything (a location step)? Only those are worth remembering. */
+function walksTheDocument(expr: Expr): boolean {
+    switch (expr.kind) {
+        case 'literal':
+        case 'number':
+        case 'variable':
+            return false;
+        case 'or':
+        case 'and':
+        case 'union':
+            return expr.operands.some(walksTheDocument);
+        case 'chain':
+            return walksTheDocument(expr.first) || expr.rest.some((link) => walksTheDocument(link.operand));
+        case 'negate':
+            return walksTheDocument(expr.operand);
+        case 'path':
+            return expr.steps.length > 0 || (expr.filter !== null && walksTheDocument(expr.filter));
+        case 'call':
+            return expr.args.some(walksTheDocument);
+    }
+}
+
+/**
+ * Evaluates `run` once per document and remembers the answer, for an expression that depends on nothing else. This is
+ * what keeps `//a[//b[//c]]` from evaluating `//b[//c]` once per `a`: the answer is the same for every context node of
+ * the document. Only while no caller code can run (`state.pure`): a custom function or a variable resolver may change
+ * the document, and the answers are dropped when one does (EvalState.userCodeRan). Values are shared, never changed.
+ */
+function remembered(run: Compiled): Compiled {
+    const site = {};
+    return (focus, state) => {
+        if (!state.pure || focus.node === NO_NODE) return run(focus, state);
+        const root = documentRoot(focus.node);
+        const answers = state.answersOf(site);
+        const known = answers.get(root);
+        if (known !== undefined) return known;
+        const value = run(focus, state);
+        answers.set(root, value);
+        return value;
+    };
+}
+
 export function compile(expr: Expr): Compiled {
+    const run = compileExpression(expr);
+    return expr.kind !== 'literal' && expr.kind !== 'number' && walksTheDocument(expr) && dependsOnDocumentOnly(expr)
+        ? remembered(run)
+        : run;
+}
+
+function compileExpression(expr: Expr): Compiled {
     switch (expr.kind) {
         case 'literal': {
             const { value } = expr;

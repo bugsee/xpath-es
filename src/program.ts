@@ -36,7 +36,7 @@ export interface EvaluateOptions {
 }
 
 /** Looks a prefix up in the DOM, from `node` outwards, the way upstream's default resolver does. */
-export const lookupNamespaceInDom: NamespaceLookup = (prefix, node) => {
+export const lookupNamespaceInDom: NamespaceLookup = (prefix, node, charge) => {
     if (prefix === 'xml') return XML_NAMESPACE_URI;
     if (prefix === 'xmlns') return XMLNS_NAMESPACE_URI;
     let current: DomNode | null | undefined = node;
@@ -47,6 +47,8 @@ export const lookupNamespaceInDom: NamespaceLookup = (prefix, node) => {
     for (; current != null && current.nodeType === ELEMENT_NODE; current = current.parentNode) {
         const attributes = current.attributes;
         const count = attributes?.length ?? 0;
+        // A deep document with many attributes per level: the walk is as long as the document is deep.
+        charge?.(count + 1);
         for (let i = 0; i < count; i++) {
             const attribute = attributes?.item(i);
             if (attribute != null && (attribute.name || attribute.nodeName) === wanted)
@@ -60,9 +62,28 @@ export const lookupNamespaceInDom: NamespaceLookup = (prefix, node) => {
  * Limits applied when the caller gives none, so that no evaluation is unbounded by accident. The budget is the
  * deterministic limit (the same on every machine); the time limit is the backstop for work the budget does not
  * model. A caller with a larger legitimate document raises them; 0 turns a limit off.
+ *
+ * The numbers come from measurements (bench/limits.ts, README "Limits"): the most work one evaluation of a signed SAML
+ * login response took was 8,004 units for a 2,000-value group list (4 units per value, under 1 ms), and the hostile
+ * documents of the gate (256 KiB each) take at most 328,000 units (18 ms). The budget is 600 times the first and 15
+ * times the second, so legitimate use passes with room, and a hostile expression is stopped after at most 5,000,000
+ * units, which is a few hundred milliseconds; the time limit is the backstop for work the units do not model.
  */
-export const DEFAULT_BUDGET = 200_000_000;
-export const DEFAULT_TIMEOUT_MS = 10_000;
+export const DEFAULT_BUDGET: number = 5_000_000;
+export const DEFAULT_TIMEOUT_MS: number = 1_000;
+
+/**
+ * `upstream` (the default) behaves as `xpath` 0.0.36 does, including where it departs from the Recommendation: that is
+ * what existing consumers have always seen, and the adoption gate. `strict` follows the Recommendation (README,
+ * "Known deviations from XPath 1.0 inherited from upstream"). The mode is fixed when the program is made, because
+ * some differences are in how the expression parses.
+ */
+export type XPathMode = 'upstream' | 'strict';
+
+export interface ProgramOptions {
+    readonly limits?: ParseLimits | undefined;
+    readonly mode?: XPathMode | undefined;
+}
 
 const isPositiveInteger = (value: number): boolean => value >= 1 && Math.floor(value) === value;
 
@@ -74,13 +95,16 @@ export class XPathProgram {
     static forceSlowPath = false;
 
     readonly source: string;
+    /** `upstream`: the behaviour of xpath 0.0.36, quirks included (the default). `strict`: XPath 1.0 as specified. */
+    readonly mode: XPathMode;
     readonly ast: Expr;
     readonly facts: ExpressionFacts;
     readonly #run: Compiled;
 
-    constructor(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS) {
+    constructor(source: string, options: ProgramOptions = {}) {
         this.source = source;
-        this.ast = parseXPath(source, limits);
+        this.mode = options.mode ?? 'upstream';
+        this.ast = parseXPath(source, options.limits ?? DEFAULT_PARSE_LIMITS);
         this.facts = expressionFacts(this.ast);
         this.#run = compile(this.ast);
     }
@@ -101,11 +125,14 @@ export class XPathProgram {
         const variableCallback =
             options.variables !== undefined && (options.callbacks?.variables ?? true) && facts.usesVariables;
         const functionCallback = options.functions !== undefined && facts.usesFunctions;
-        const budget = options.budget ?? DEFAULT_BUDGET;
-        const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-        // NaN would silently turn a limit off (every comparison with it is false), and a negative value is no limit.
-        if (!(budget >= 0) || !(timeoutMs >= 0)) {
-            throw new XPathContextError('budget and timeoutMs must be numbers of at least 0 (0 turns a limit off).');
+        const budget: unknown = options.budget === undefined ? DEFAULT_BUDGET : options.budget;
+        const timeoutMs: unknown = options.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : options.timeoutMs;
+        // A string such as '0' compares as a number, and NaN compares false with everything: either would silently
+        // turn a limit off. Only a real number of at least 0 is a limit.
+        if (typeof budget !== 'number' || typeof timeoutMs !== 'number' || !(budget >= 0) || !(timeoutMs >= 0)) {
+            throw new XPathContextError(
+                'budget and timeoutMs must be numbers of at least 0 (0 turns a limit off); got a different type or value.'
+            );
         }
         const state = new EvalState({
             contextNode: node,
@@ -117,6 +144,7 @@ export class XPathProgram {
             pure: !XPathProgram.forceSlowPath && !variableCallback && !functionCallback,
             namespaceCallback,
             keepNumbering: !XPathProgram.forceSlowPath,
+            strict: this.mode === 'strict',
             budget,
             timeoutMs,
             mergeUnions: options.mergeUnions ?? true

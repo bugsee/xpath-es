@@ -22,9 +22,10 @@ import type { DomNode } from './dom.ts';
 import { XPathContextError, XPathError, XPathSyntaxError, XPathTypeError } from './errors.ts';
 import { sortInDocumentOrder } from './order.ts';
 import { lookupNamespaceInDom, XPathProgram } from './program.ts';
+import type { XPathMode } from './program.ts';
 import type { EvaluateOptions } from './program.ts';
 import { NodeSet, numberToString, stringToNumber, stringValueOf } from './runtime.ts';
-import type { CustomFunction, FunctionLookup, NamespaceLookup, VariableLookup, XValue } from './runtime.ts';
+import type { CustomFunction, EvalState, FunctionLookup, NamespaceLookup, VariableLookup, XValue } from './runtime.ts';
 
 export type SelectedValue = DomNode | string | number | boolean | null | undefined;
 export type SelectReturnType = DomNode[] | SelectedValue;
@@ -35,8 +36,13 @@ export interface XPathNSResolver {
 }
 
 export interface XPathSelect {
-    (expression: string, node?: DomNode | null, single?: false): SelectReturnType;
-    (expression: string, node: DomNode | null | undefined, single: true): SelectSingleReturnType;
+    (expression: string, node?: DomNode | null, single?: false, options?: SelectOptions): SelectReturnType;
+    (
+        expression: string,
+        node: DomNode | null | undefined,
+        single: true,
+        options?: SelectOptions
+    ): SelectSingleReturnType;
 }
 
 // ---- value wrappers with upstream's method names ----
@@ -183,20 +189,47 @@ function unwrap(value: unknown): XValue | null {
     return new NodeSet([...new Set(nodes)], false);
 }
 
-// ---- parse cache: expression text -> program. Holds no DOM state; bounded. ----
+// ---- parse cache: expression text -> program. Holds no DOM state; bounded in entries and in bytes. ----
 
-const PROGRAM_CACHE_LIMIT = 512;
+/**
+ * A byte-bounded LRU. A program is several times the size of its source (the tree, closures), so the cache is bounded
+ * by the total length of the sources it holds, not only by the number of entries, and an expression longer than
+ * CACHEABLE_LENGTH is not cached at all (an attacker's 1 MB expression must not pin 100 MB; such an expression is
+ * parsed again each time, which is linear).
+ */
+const CACHE_ENTRIES = 512;
+const CACHE_TOTAL_LENGTH = 1 << 18;
+const CACHEABLE_LENGTH = 2048;
 const programs = new Map<string, XPathProgram>();
+let cachedLength = 0;
 
-function programFor(expression: unknown): XPathProgram {
+function programFor(expression: unknown, mode: XPathMode = 'upstream'): XPathProgram {
     if (!expression) throw new XPathSyntaxError('XPath expression unspecified.');
     if (typeof expression !== 'string') throw new XPathSyntaxError('XPath expression must be a string.');
-    const cached = programs.get(expression);
-    if (cached !== undefined) return cached;
-    const program = new XPathProgram(expression);
-    if (programs.size >= PROGRAM_CACHE_LIMIT) programs.clear();
-    programs.set(expression, program);
+    if (expression.length > CACHEABLE_LENGTH) return new XPathProgram(expression, { mode });
+    const key = `${mode}:${expression}`;
+    const cached = programs.get(key);
+    if (cached !== undefined) {
+        // Most recently used goes last.
+        programs.delete(key);
+        programs.set(key, cached);
+        return cached;
+    }
+    const program = new XPathProgram(expression, { mode });
+    programs.set(key, program);
+    cachedLength += key.length;
+    for (const [oldest, old] of programs) {
+        if (programs.size <= CACHE_ENTRIES && cachedLength <= CACHE_TOTAL_LENGTH) break;
+        if (old === program) break;
+        programs.delete(oldest);
+        cachedLength -= oldest.length;
+    }
     return program;
+}
+
+/** Entries and characters held by the parse cache (for the tests). */
+export function parseCacheSize(): { readonly entries: number; readonly length: number } {
+    return { entries: programs.size, length: cachedLength };
 }
 
 function contextNodeOf(node: unknown): DomNode | null {
@@ -222,31 +255,62 @@ function detectHtmlDom(node: DomNode | null): boolean {
     }
 }
 
+/** What the select family takes besides the expression and the node: the limits of an evaluation, and the mode. */
+export interface SelectOptions {
+    /** Work limit; see DEFAULT_BUDGET. 0 turns it off. */
+    readonly budget?: number | undefined;
+    /** Wall-clock limit in milliseconds; see DEFAULT_TIMEOUT_MS. 0 turns it off. */
+    readonly timeoutMs?: number | undefined;
+    /** `upstream` (the default) or `strict` XPath 1.0. */
+    readonly mode?: XPathMode | undefined;
+}
+
+function runSelect(
+    expression: unknown,
+    node: unknown,
+    resolver: XPathNSResolver | null | undefined,
+    options: SelectOptions | undefined
+): { readonly value: XValue; readonly state: EvalState } {
+    const program = programFor(expression, options?.mode);
+    const contextNode = contextNodeOf(node);
+    const namespaces: NamespaceLookup = resolver == null ? () => null : (prefix) => resolver.lookupNamespaceURI(prefix);
+    return program.run({
+        node: contextNode,
+        namespaces,
+        caseInsensitive: program.mode === 'strict' ? isHtmlDocument(contextNode) : detectHtmlDom(contextNode),
+        budget: options?.budget,
+        timeoutMs: options?.timeoutMs
+    });
+}
+
+/**
+ * Strict mode: an HTML document (a browser's, jsdom's, ...) matches names without regard to ASCII case, as HTML does;
+ * an XML document never does. Upstream decides with `implementation.hasFeature('HTML', '2.0')`, which every modern DOM
+ * answers true for, so there an XML document is matched case-insensitively too (`detectHtmlDom`).
+ */
+function isHtmlDocument(node: DomNode | null): boolean {
+    if (node === null) return false;
+    const document = node.nodeType === DOCUMENT_NODE ? node : node.ownerDocument;
+    return document?.contentType === 'text/html';
+}
+
 function selectOne(
     expression: unknown,
     node: unknown,
-    resolver: XPathNSResolver | null | undefined
+    resolver: XPathNSResolver | null | undefined,
+    options?: SelectOptions
 ): SelectSingleReturnType {
-    const program = programFor(expression);
-    const contextNode = contextNodeOf(node);
-    const namespaces: NamespaceLookup = resolver == null ? () => null : (prefix) => resolver.lookupNamespaceURI(prefix);
-    const { value, state } = program.run({
-        node: contextNode,
-        namespaces,
-        caseInsensitive: detectHtmlDom(contextNode)
-    });
+    const { value, state } = runSelect(expression, node, resolver, options);
     return value instanceof NodeSet ? value.sorted(state)[0] : value;
 }
 
-function selectAll(expression: unknown, node: unknown, resolver: XPathNSResolver | null | undefined): SelectReturnType {
-    const program = programFor(expression);
-    const contextNode = contextNodeOf(node);
-    const namespaces: NamespaceLookup = resolver == null ? () => null : (prefix) => resolver.lookupNamespaceURI(prefix);
-    const { value, state } = program.run({
-        node: contextNode,
-        namespaces,
-        caseInsensitive: detectHtmlDom(contextNode)
-    });
+function selectAll(
+    expression: unknown,
+    node: unknown,
+    resolver: XPathNSResolver | null | undefined,
+    options?: SelectOptions
+): SelectReturnType {
+    const { value, state } = runSelect(expression, node, resolver, options);
     return value instanceof NodeSet ? value.sorted(state).slice() : value;
 }
 
@@ -254,43 +318,84 @@ export function selectWithResolver(
     expression: string,
     node?: DomNode | null,
     resolver?: XPathNSResolver | null,
-    single?: false
+    single?: false,
+    options?: SelectOptions
 ): SelectReturnType;
 export function selectWithResolver(
     expression: string,
     node: DomNode | null | undefined,
     resolver: XPathNSResolver | null | undefined,
-    single: true
+    single: true,
+    options?: SelectOptions
 ): SelectSingleReturnType;
 export function selectWithResolver(
     expression: string,
     node?: DomNode | null,
     resolver?: XPathNSResolver | null,
-    single?: boolean
+    single?: boolean,
+    options?: SelectOptions
 ): SelectReturnType {
-    return single === true ? selectOne(expression, node, resolver) : selectAll(expression, node, resolver);
+    return single === true
+        ? selectOne(expression, node, resolver, options)
+        : selectAll(expression, node, resolver, options);
 }
 
-export function select(expression: string, node?: DomNode | null, single?: false): SelectReturnType;
-export function select(expression: string, node: DomNode | null | undefined, single: true): SelectSingleReturnType;
-export function select(expression: string, node?: DomNode | null, single?: boolean): SelectReturnType {
-    return single === true ? selectOne(expression, node, null) : selectAll(expression, node, null);
+export function select(
+    expression: string,
+    node?: DomNode | null,
+    single?: false,
+    options?: SelectOptions
+): SelectReturnType;
+export function select(
+    expression: string,
+    node: DomNode | null | undefined,
+    single: true,
+    options?: SelectOptions
+): SelectSingleReturnType;
+export function select(
+    expression: string,
+    node?: DomNode | null,
+    single?: boolean,
+    options?: SelectOptions
+): SelectReturnType {
+    return single === true ? selectOne(expression, node, null, options) : selectAll(expression, node, null, options);
 }
 
-export function select1(expression: string, node?: DomNode | null): SelectSingleReturnType {
-    return selectOne(expression, node, null);
+export function select1(expression: string, node?: DomNode | null, options?: SelectOptions): SelectSingleReturnType {
+    return selectOne(expression, node, null, options);
 }
 
-export function useNamespaces(mappings: Readonly<Record<string, string>>): XPathSelect {
-    const resolver: XPathNSResolver = { lookupNamespaceURI: (prefix) => mappings[prefix] };
-    function selectWithMappings(expression: string, node?: DomNode | null, single?: false): SelectReturnType;
+/**
+ * Selection with prefix mappings. The mappings are looked up by own property only: a prefix called `constructor` or
+ * `toString` is not a prototype member. `defaults` apply to every call of the returned function unless the call
+ * passes its own options.
+ */
+export function useNamespaces(mappings: Readonly<Record<string, string>>, defaults?: SelectOptions): XPathSelect {
+    const resolver: XPathNSResolver = {
+        lookupNamespaceURI: (prefix) => (Object.hasOwn(mappings, prefix) ? mappings[prefix] : undefined)
+    };
+    function selectWithMappings(
+        expression: string,
+        node?: DomNode | null,
+        single?: false,
+        options?: SelectOptions
+    ): SelectReturnType;
     function selectWithMappings(
         expression: string,
         node: DomNode | null | undefined,
-        single: true
+        single: true,
+        options?: SelectOptions
     ): SelectSingleReturnType;
-    function selectWithMappings(expression: string, node?: DomNode | null, single?: boolean): SelectReturnType {
-        return single === true ? selectOne(expression, node, resolver) : selectAll(expression, node, resolver);
+    function selectWithMappings(
+        expression: string,
+        node?: DomNode | null,
+        single?: boolean,
+        options?: SelectOptions
+    ): SelectReturnType {
+        const effective = options ?? defaults;
+        return single === true
+            ? selectOne(expression, node, resolver, effective)
+            : selectAll(expression, node, resolver, effective);
     }
     return selectWithMappings;
 }
@@ -335,12 +440,18 @@ function lookupFrom(
     method: string
 ): { readonly call: AnyFunction; readonly callback: boolean } | null {
     if (isRecord(option)) {
+        // A method of the object itself or of its class, but never of Object.prototype (toString, constructor, ...).
         const member = option[method];
-        if (isFunction(member)) return { call: (...args) => member.apply(option, args), callback: true };
+        if (isFunction(member) && member !== Reflect.get(Object.prototype, method))
+            return { call: (...args) => member.apply(option, args), callback: true };
     }
     if (isFunction(option)) return { call: option, callback: true };
     if (isRecord(option))
-        return { call: (name) => (typeof name === 'string' ? option[name] : undefined), callback: false };
+        return {
+            // Own properties only: `{}` has no function called `toString` for an expression to call.
+            call: (name) => (typeof name === 'string' && Object.hasOwn(option, name) ? option[name] : undefined),
+            callback: false
+        };
     return null;
 }
 
@@ -352,9 +463,9 @@ function toEngineOptions(options: XPathEvaluateOptions | undefined): EvaluateOpt
     const namespaceLookup: NamespaceLookup | undefined =
         namespaces === null
             ? undefined
-            : (prefix, node) => {
+            : (prefix, node, charge) => {
                   const uri = namespaces.call(prefix, node);
-                  return typeof uri === 'string' && uri !== '' ? uri : lookupNamespaceInDom(prefix, node);
+                  return typeof uri === 'string' && uri !== '' ? uri : lookupNamespaceInDom(prefix, node, charge);
               };
     const variableLookup: VariableLookup | undefined =
         variables === null ? undefined : (name, namespace) => unwrap(variables.call(name, namespace));
@@ -434,8 +545,8 @@ export class XPathEvaluator {
     }
 }
 
-export function parse(expression: string): XPathEvaluator {
-    return new XPathEvaluator(programFor(expression));
+export function parse(expression: string, options?: Pick<SelectOptions, 'mode'>): XPathEvaluator {
+    return new XPathEvaluator(programFor(expression, options?.mode));
 }
 
 // ---- DOM Level 3 XPath: evaluate() and XPathResult ----

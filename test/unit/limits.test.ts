@@ -59,13 +59,13 @@ void test('string work is charged: a string function over a big text stops on a 
 });
 
 void test('the wall-clock limit stops evaluation with a typed error', () => {
-    // string(/r) walks the whole document once per candidate: quadratic work the clock has to cut off.
-    const program = new XPathProgram('count(//a[contains(string(/r), "y")])');
+    // every candidate walks everything before it: quadratic work the clock has to cut off.
+    const program = new XPathProgram('count(//a[count(preceding::a) >= 0])');
     const doc = parse(flat(20_000));
     const start = process.hrtime.bigint();
     assert.throws(
         () => program.run({ node: doc, budget: 0, timeoutMs: 20 }),
-        (error: unknown) => error instanceof XPathTimeoutError && error.code === 'BUDGET'
+        (error: unknown) => error instanceof XPathTimeoutError && error.code === 'TIMEOUT'
     );
     assert.ok(Number(process.hrtime.bigint() - start) / 1e6 < 2000);
 });

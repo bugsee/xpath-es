@@ -1,0 +1,34 @@
+astral name eng                                                        0 ms ERR XPathSyntaxError Unexpected character �
+astral name up                                                         0 ms ERR Error Unexpected character �
+paren 255                                                              1 ms 1
+paren 256                                                              0 ms 1
+paren 257                                                              0 ms ERR XPathLimitError XPath expression nests deeper than 256 levels
+not( x255                                                              1 ms false
+pred nest 255 eval                                                     2 ms len 0
+pred nest 255 positional eval                                          1 ms len 1
+minus x255                                                             0 ms -1
+minus x300                                                             0 ms ERR XPathLimitError XPath expression nests deeper than 256 levels
+up pred nest 255                                                       2 ms len 0
+1+1... 400k                                                           83 ms 400001
+up 1+1... 400k                                                       216 ms ERR RangeError Maximum call stack size exceeded
+a/a/a... 300k steps                                                   92 ms len 0
+self::*/ x 300k                                                        0 ms ERR XPathLimitError XPath expression is longer than 1048576 characters
+. /./. 500k                                                          106 ms len 1
+.. x 400k                                                              0 ms len 1
+a or x 300k                                                           38 ms false
+number literal 900k digits                                            14 ms Infinity
+literal 1M                                                             0 ms 1000000
+name 1M chars                                                          3 ms len 0
+len > 1M                                                               0 ms ERR XPathLimitError XPath expression is longer than 1048576 characters
+1<<20 exactly parse error type                                         0 ms XPathLimitError LIMIT
+//a//a//a 50 chains on 50k                                             5 ms 0
+//a/following::a/following::a (50k)                                   14 ms 49998
+//a/preceding::a/preceding::a (50k)                                   16 ms 49998
+//a[last()]/..//a[last()]                                              3 ms 1
+//a[position()>1]/preceding-sibling::a[1]                             16 ms 49999
+//a[position()=last()-1]                                               6 ms 1
+//a/preceding-sibling::a[last()]                                    4028 ms ERR XPathBudgetError XPath evaluation exceeded its work budget of 200000000 node visits
+//a/following-sibling::a[2]                                           10 ms 49998
+//a[count(following-sibling::a)=1]                                     7 ms 1
+//a[count(preceding::a)=1]                                          4591 ms ERR XPathBudgetError XPath evaluation exceeded its work budget of 200000000 node visits
+//a[count(following::a)=1]                                          4769 ms ERR XPathBudgetError XPath evaluation exceeded its work budget of 200000000 node visits

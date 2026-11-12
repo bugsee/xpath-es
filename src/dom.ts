@@ -54,6 +54,8 @@ export interface DomNode {
     readonly target?: string | undefined;
     /** Set on the engine's own namespace nodes. */
     readonly isXPathNamespace?: boolean | undefined;
+    /** Document only: the MIME type the DOM parsed it as (browsers, jsdom, linkedom, happy-dom). */
+    readonly contentType?: string | undefined;
     /** Document only; read once per `select()` to mirror upstream's HTML detection. */
     readonly implementation?: { hasFeature?(feature: string, version: string): boolean } | null | undefined;
     getElementById?(id: string): DomNode | null | undefined;

@@ -3,7 +3,7 @@
 
 export * from './compat.ts';
 export { XPathProgram, DEFAULT_BUDGET, DEFAULT_TIMEOUT_MS, lookupNamespaceInDom } from './program.ts';
-export type { EvaluateOptions } from './program.ts';
+export type { EvaluateOptions, ProgramOptions, XPathMode } from './program.ts';
 export { DEFAULT_PARSE_LIMITS } from './parser.ts';
 export type { ParseLimits } from './parser.ts';
 export {

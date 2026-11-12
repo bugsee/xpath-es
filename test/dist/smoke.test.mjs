@@ -69,7 +69,7 @@ test('the time limit works, and the engine still loads, where there is no perfor
         const engine = await import('xpath-es');
         const { DOMParser } = await import('@xmldom/xmldom');
         const doc = new DOMParser().parseFromString('<r>' + '<a>x</a>'.repeat(6000) + '</r>', 'text/xml');
-        const program = new engine.XPathProgram('count(//a[contains(string(/), "y")])');
+        const program = new engine.XPathProgram('count(//a[count(preceding::a) >= 0])');
         try { program.run({ node: doc, budget: 0, timeoutMs: 30 }); console.log('no error'); }
         catch (error) { console.log(error instanceof engine.XPathTimeoutError ? 'timeout' : String(error)); }
     `;

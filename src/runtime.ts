@@ -9,7 +9,7 @@ import {
     TEXT_NODE
 } from './dom.ts';
 import type { DomNode } from './dom.ts';
-import { XPathBudgetError, XPathOrderError, XPathResolveError, XPathTimeoutError } from './errors.ts';
+import { XPathBudgetError, XPathLimitError, XPathOrderError, XPathResolveError, XPathTimeoutError } from './errors.ts';
 import { now } from './clock.ts';
 import { FEW_NODES, Numbering, sortFew } from './order.ts';
 
@@ -65,7 +65,12 @@ export interface Focus {
 
 export type Compiled = (focus: Focus, state: EvalState) => XValue;
 
-export type NamespaceLookup = (prefix: string, node: DomNode) => string | null | undefined;
+/** A prefix resolver. `charge` accounts for the work of a lookup that walks the document (see EvalState.charge). */
+export type NamespaceLookup = (
+    prefix: string,
+    node: DomNode,
+    charge?: (units: number) => void
+) => string | null | undefined;
 export type VariableLookup = (localName: string, namespace: string) => XValue | null | undefined;
 export type CustomFunction = (focus: Focus, state: EvalState, args: readonly XValue[]) => XValue;
 export type FunctionLookup = (localName: string, namespace: string) => CustomFunction | null | undefined;
@@ -88,6 +93,8 @@ export interface EvalSettings {
      * not allowed to change the document (the contract, see the README), so it does not make the evaluation impure.
      */
     readonly namespaceCallback: boolean;
+    /** XPath 1.0 as specified (mode `strict`), not as upstream implements it. */
+    readonly strict: boolean;
     /** Keep the document-order numbering between calls. False only for the slow-path test switch. */
     readonly keepNumbering: boolean;
     /** Node visits allowed, or 0 for no limit. */
@@ -97,6 +104,13 @@ export interface EvalSettings {
     /** Union strategy: merge ordered operands on document-order keys (true) or concatenate and sort lazily (false). */
     readonly mergeUnions: boolean;
 }
+
+/** What an evaluation may build: namespace nodes (a deep document with a new prefix per level makes N*N/2 of them). */
+export const MAX_NAMESPACE_NODES: number = 1 << 18;
+/** The work a namespace node costs (an object and its fields, against a node visit). */
+const NAMESPACE_NODE_COST = 4;
+/** The longest string an evaluation may build (concat() can double a string per level). */
+export const MAX_STRING_LENGTH: number = 1 << 24;
 
 /** Work units between two looks at the clock: rare enough to be free, frequent enough to stop within milliseconds. */
 const CLOCK_CHECK_INTERVAL = 4096;
@@ -115,6 +129,13 @@ export class EvalState {
     readonly #deadline: number;
     #nextClockCheck = CLOCK_CHECK_INTERVAL;
     readonly #prefixes = new Map<string, string>();
+    /** id -> first element, per document, built once per evaluation and dropped when caller code runs. */
+    readonly #idIndexes = new Map<DomNode, ReadonlyMap<string, DomNode>>();
+    /** Answers of document-only subexpressions (compile.ts `remembered`), per site and per document. */
+    readonly #answers = new Map<object, Map<DomNode, XValue>>();
+    /** The language of a node as lang() sees it (null: none), memoised so that a deep document stays linear. */
+    readonly languages: Map<DomNode, string | null> = new Map<DomNode, string | null>();
+    #namespaceNodes = 0;
     /** Per-site caches (sibling ranks). Only filled when `pure`, so they cannot outlive a change to the DOM. */
     readonly siteCaches: Map<object, Map<DomNode, number>> = new Map<object, Map<DomNode, number>>();
 
@@ -155,6 +176,54 @@ export class EvalState {
     userCodeRan(): void {
         this.#numbering = null;
         this.siteCaches.clear();
+        this.#idIndexes.clear();
+        this.#answers.clear();
+        this.languages.clear();
+    }
+
+    /**
+     * The element with each `id` attribute of the document, first in document order: one walk per evaluation (the DOM's
+     * own getElementById is a walk of the whole document in some implementations, once per token), charged as it goes.
+     */
+    elementsById(document: DomNode): ReadonlyMap<string, DomNode> {
+        const known = this.#idIndexes.get(document);
+        if (known !== undefined) return known;
+        const index = new Map<string, DomNode>();
+        let visits = 0;
+        let node: DomNode | null | undefined = document.firstChild;
+        while (node != null) {
+            if (++visits % 4096 === 0) this.charge(4096);
+            if (node.nodeType === ELEMENT_NODE && node.getAttribute !== undefined) {
+                const id = node.getAttribute('id');
+                if (id != null && id !== '' && !index.has(id)) index.set(id, node);
+            }
+            let next: DomNode | null | undefined = node.firstChild;
+            while (next == null && node != null && node !== document) {
+                next = node.nextSibling;
+                if (next == null) node = node.parentNode;
+            }
+            node = next;
+        }
+        this.charge(visits % 4096);
+        this.#idIndexes.set(document, index);
+        return index;
+    }
+
+    answersOf(site: object): Map<DomNode, XValue> {
+        let answers = this.#answers.get(site);
+        if (answers === undefined) {
+            answers = new Map<DomNode, XValue>();
+            this.#answers.set(site, answers);
+        }
+        return answers;
+    }
+
+    /** Accounts for namespace nodes about to be made (the axis makes a node per binding per context node). */
+    chargeNamespaceNodes(count: number): void {
+        this.#namespaceNodes += count;
+        if (this.#namespaceNodes > MAX_NAMESPACE_NODES)
+            throw new XPathLimitError(`The namespace axis would make more than ${MAX_NAMESPACE_NODES} nodes`);
+        this.charge(count * NAMESPACE_NODE_COST);
     }
 
     /** Document order for a duplicate-free array. Throws XPathOrderError when the nodes are not in one tree. */
@@ -201,7 +270,10 @@ export class EvalState {
 
     /** Namespace URI for the prefix of a function or variable name, looked up from the current context node. */
     resolvePrefix(prefix: string, node: DomNode): string {
-        const uri = this.settings.namespaces(prefix, node);
+        const uri = this.settings.namespaces(prefix, node, (units) => {
+            this.charge(units);
+        });
+        this.charge(1);
         if (uri == null) throw new XPathResolveError(`Cannot resolve QName ${prefix}`);
         return uri;
     }

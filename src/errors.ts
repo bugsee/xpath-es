@@ -1,7 +1,7 @@
 // Typed error hierarchy. Messages of the compat-visible errors repeat upstream's wording, because callers
 // (and the differential fuzzer) compare `error.message`.
 
-export type XPathErrorCode = 'SYNTAX' | 'TYPE' | 'RESOLVE' | 'ORDER' | 'LIMIT' | 'BUDGET' | 'CONTEXT';
+export type XPathErrorCode = 'SYNTAX' | 'TYPE' | 'RESOLVE' | 'ORDER' | 'LIMIT' | 'BUDGET' | 'TIMEOUT' | 'CONTEXT';
 
 export class XPathError extends Error {
     readonly code: XPathErrorCode;
@@ -41,7 +41,7 @@ export class XPathOrderError extends XPathError {
     }
 }
 
-/** A static limit was exceeded (expression length, nesting depth). */
+/** A fixed limit was exceeded: the expression's length or nesting depth, or the size of something an evaluation would build. */
 export class XPathLimitError extends XPathError {
     constructor(message: string) {
         super('LIMIT', message);
@@ -58,7 +58,7 @@ export class XPathBudgetError extends XPathError {
 /** The per-evaluation wall-clock limit ran out. */
 export class XPathTimeoutError extends XPathError {
     constructor(limitMs: number) {
-        super('BUDGET', `XPath evaluation exceeded its time limit of ${limitMs} ms`);
+        super('TIMEOUT', `XPath evaluation exceeded its time limit of ${limitMs} ms`);
     }
 }
 
