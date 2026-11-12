@@ -104,7 +104,7 @@ export class XPathProgram {
     constructor(source: string, options: ProgramOptions = {}) {
         this.source = source;
         this.mode = options.mode ?? 'upstream';
-        this.ast = parseXPath(source, options.limits ?? DEFAULT_PARSE_LIMITS);
+        this.ast = parseXPath(source, options.limits ?? DEFAULT_PARSE_LIMITS, this.mode === 'strict');
         this.facts = expressionFacts(this.ast);
         this.#run = compile(this.ast);
     }
@@ -149,6 +149,11 @@ export class XPathProgram {
             timeoutMs,
             mergeUnions: options.mergeUnions ?? true
         });
+        if (this.mode === 'strict') {
+            // Section 2.3: a prefix the expression context cannot resolve is an error, whether or not any node is ever
+            // tested against it (upstream finds out only when it applies the test to a node).
+            for (const prefix of facts.prefixes) state.resolvePrefix(prefix, node);
+        }
         return { value: this.#run({ node, position, size }, state), state };
     }
 }

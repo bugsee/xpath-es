@@ -302,6 +302,10 @@ function siblingCountStep(expr: Expr): Step | null {
         return null;
     const step = arg.steps[0];
     if (step === undefined || step.predicates.length !== 0) return null;
+    // A name test with a prefix asks the resolver, and can fail, when it is first applied to a node: the rank pass would
+    // apply it to siblings that upstream never tests (a context with no following sibling tests none), so it keeps the
+    // generic path, which tests the same nodes upstream does.
+    if (step.test.kind === 'prefixAny' || (step.test.kind === 'name' && step.test.prefix !== null)) return null;
     return step.axis === 'preceding-sibling' || step.axis === 'following-sibling' ? step : null;
 }
 
@@ -489,6 +493,8 @@ export interface ExpressionFacts {
     readonly usesPrefixes: boolean;
     readonly usesVariables: boolean;
     readonly usesFunctions: boolean;
+    /** Every prefix the expression uses (name tests, function names, variable names), for strict mode's early check. */
+    readonly prefixes: ReadonlySet<string>;
 }
 
 /** What caller-supplied code an expression can reach; decides whether an evaluation is `pure`. */
@@ -496,6 +502,7 @@ export function expressionFacts(root: Expr): ExpressionFacts {
     let usesPrefixes = false;
     let usesVariables = false;
     let usesFunctions = false;
+    const prefixes = new Set<string>();
     // Explicit work list: the AST can be wide, and this must not recurse.
     const pending: Expr[] = [root];
     for (let expr = pending.pop(); expr !== undefined; expr = pending.pop()) {
@@ -516,24 +523,35 @@ export function expressionFacts(root: Expr): ExpressionFacts {
                 if (expr.filter !== null) pending.push(expr.filter);
                 for (const predicate of expr.filterPredicates) pending.push(predicate);
                 for (const step of expr.steps) {
-                    if (step.test.kind === 'prefixAny' || (step.test.kind === 'name' && step.test.prefix !== null))
+                    if (step.test.kind === 'prefixAny') {
                         usesPrefixes = true;
+                        prefixes.add(step.test.prefix);
+                    } else if (step.test.kind === 'name' && step.test.prefix !== null) {
+                        usesPrefixes = true;
+                        prefixes.add(step.test.prefix);
+                    }
                     for (const predicate of step.predicates) pending.push(predicate);
                 }
                 break;
             case 'call':
                 usesFunctions = true;
-                if (expr.name.includes(':')) usesPrefixes = true;
+                if (expr.name.includes(':')) {
+                    usesPrefixes = true;
+                    prefixes.add(expr.name.slice(0, expr.name.indexOf(':')));
+                }
                 for (const arg of expr.args) pending.push(arg);
                 break;
             case 'variable':
                 usesVariables = true;
-                if (expr.name.includes(':')) usesPrefixes = true;
+                if (expr.name.includes(':')) {
+                    usesPrefixes = true;
+                    prefixes.add(expr.name.slice(0, expr.name.indexOf(':')));
+                }
                 break;
             case 'literal':
             case 'number':
                 break;
         }
     }
-    return { usesPrefixes, usesVariables, usesFunctions };
+    return { usesPrefixes, usesVariables, usesFunctions, prefixes };
 }

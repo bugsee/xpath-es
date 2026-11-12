@@ -131,9 +131,22 @@ function isTreeNode(node: DomNode): boolean {
 }
 
 /** Parent on the parent/ancestor axes: an attribute's owner element; Q-AXIS-1: a namespace node has none. */
-function axisParent(node: DomNode): DomNode | null {
+function axisParent(node: DomNode, strict: boolean): DomNode | null {
     if (node.nodeType === ATTRIBUTE_NODE) return node.ownerElement ?? null;
+    // Q-AXIS-1: upstream's namespace node has no parent. XPath 1.0 section 5.4: its parent is the element.
+    if (strict && node.nodeType === NAMESPACE_NODE) return node.ownerElement ?? null;
     return node.parentNode ?? null;
+}
+
+/** The node an attribute or namespace node hangs from; a tree node is its own place in the tree. */
+function anchorOf(node: DomNode): DomNode {
+    return node.nodeType === ATTRIBUTE_NODE || node.nodeType === NAMESPACE_NODE ? (node.ownerElement ?? node) : node;
+}
+
+/** Strict: a namespace declaration (`xmlns`, `xmlns:p`) is not an attribute of the element (section 5.3). */
+function isNamespaceDeclaration(attribute: DomNode): boolean {
+    const name = String(attribute.name ?? attribute.nodeName);
+    return name === 'xmlns' || name.startsWith('xmlns:');
 }
 
 /** Next node of a pre-order walk that stays inside the subtree of `root`. */
@@ -161,6 +174,13 @@ function before(node: DomNode): DomNode | null {
     if (previous == null) return node.parentNode ?? null;
     for (let last = previous.lastChild; last != null; last = previous.lastChild) previous = last;
     return previous;
+}
+
+/** The ancestors of a node (the preceding axis of section 2.2 does not contain them). */
+function ancestorsOf(node: DomNode): Set<DomNode> {
+    const ancestors = new Set<DomNode>();
+    for (let up = node.parentNode; up != null; up = up.parentNode) ancestors.add(up);
+    return ancestors;
 }
 
 /** Next node of a pre-order walk that skips the subtree of `node`. */
@@ -211,6 +231,17 @@ function namespaceNodes(element: DomNode, state: EvalState): NamespaceNode[] {
         }
     }
     state.chargeNamespaceNodes(declarations.length + 1);
+    if (state.strict) {
+        // Section 5.4: one node per binding in scope, made once (a node-set holds it once however it is reached), and
+        // no node for `xmlns=""`, which says there is no default namespace.
+        out.push(state.internedNamespaceNode(element, 'xml', null, XML_NAMESPACE_URI, -1));
+        for (const { prefix, attribute, local } of declarations) {
+            const uri = attribute.value ?? '';
+            if (prefix === '' && uri === '') continue;
+            out.push(state.internedNamespaceNode(element, prefix, attribute, uri, local));
+        }
+        return out;
+    }
     out.push(new NamespaceNode('xml', null, XML_NAMESPACE_URI, element, -1));
     for (const { prefix, attribute, local } of declarations)
         out.push(new NamespaceNode(prefix, attribute, attribute.value ?? '', element, local));
@@ -254,7 +285,12 @@ function axisOf(step: CompiledStep, context: DomNode, state: EvalState, out: Dom
             const count = attributes?.length ?? 0;
             for (let i = 0; i < count; i++) {
                 const attribute = attributes?.item(i);
-                if (attribute != null && match(attribute, state)) out.push(attribute);
+                if (
+                    attribute != null &&
+                    match(attribute, state) &&
+                    !(state.strict && isNamespaceDeclaration(attribute))
+                )
+                    out.push(attribute);
             }
             visits += count;
             break;
@@ -263,16 +299,16 @@ function axisOf(step: CompiledStep, context: DomNode, state: EvalState, out: Dom
             if (match(context, state)) out.push(context);
             break;
         case 'parent': {
-            const parent = axisParent(context);
+            const parent = axisParent(context, state.strict);
             if (parent !== null && match(parent, state)) out.push(parent);
             break;
         }
         case 'ancestor':
         case 'ancestor-or-self':
             for (
-                let node = step.axis === 'ancestor' ? axisParent(context) : context;
+                let node = step.axis === 'ancestor' ? axisParent(context, state.strict) : context;
                 node !== null;
-                node = axisParent(node)
+                node = axisParent(node, state.strict)
             ) {
                 visits++;
                 if (match(node, state)) out.push(node);
@@ -304,6 +340,18 @@ function axisOf(step: CompiledStep, context: DomNode, state: EvalState, out: Dom
             // Q-AXIS-3: upstream starts at the first child when there is one (so the context's own descendants are
             // "following" and its following siblings are not), else at the next sibling; then, for every ancestor
             // below the document node, at that ancestor's next sibling.
+            if (state.strict) {
+                // Section 2.2: everything after the context in document order except its descendants: the following
+                // siblings of the node and of each ancestor, with their subtrees. An attribute or namespace node
+                // comes after its element and before the element's children, so for it the children are following.
+                const place = anchorOf(context);
+                if (place !== context) visits += walkSubtrees(place.firstChild, step, state, out);
+                visits += walkSubtrees(place.nextSibling, step, state, out);
+                for (let up = place.parentNode; up != null && up.nodeType !== DOCUMENT_NODE; up = up.parentNode) {
+                    visits += walkSubtrees(up.nextSibling, step, state, out);
+                }
+                break;
+            }
             visits += walkSubtrees(context.firstChild ?? context.nextSibling, step, state, out);
             for (let up = context.parentNode; up != null && up.nodeType !== DOCUMENT_NODE; up = up.parentNode) {
                 visits += walkSubtrees(up.nextSibling, step, state, out);
@@ -313,6 +361,18 @@ function axisOf(step: CompiledStep, context: DomNode, state: EvalState, out: Dom
         case 'preceding': {
             // Q-AXIS-4: everything before the context in document order, ancestors and the root included; nothing
             // for an attribute or a namespace node (they are their own root here). Nearest first, as the axis is read.
+            if (state.strict) {
+                // Section 2.2: before the context in document order, ancestors excluded; an attribute or a namespace
+                // node stands where its element stands.
+                const place = anchorOf(context);
+                const ancestors = ancestorsOf(place);
+                visits += ancestors.size;
+                for (let node = before(place); node !== null; node = before(node)) {
+                    visits++;
+                    if (!ancestors.has(node) && match(node, state)) out.push(node);
+                }
+                break;
+            }
             for (let node = before(context); node !== null; node = before(node)) {
                 visits++;
                 if (match(node, state)) out.push(node);
@@ -365,9 +425,9 @@ function nthOnAxis(step: CompiledStep, context: DomNode, k: number, state: EvalS
         case 'ancestor':
         case 'ancestor-or-self':
             for (
-                let node = step.axis === 'ancestor' ? axisParent(context) : context;
+                let node = step.axis === 'ancestor' ? axisParent(context, state.strict) : context;
                 node !== null;
-                node = axisParent(node)
+                node = axisParent(node, state.strict)
             ) {
                 visits++;
                 if (match(node, state) && --left === 0) {
@@ -395,15 +455,19 @@ function nthOnAxis(step: CompiledStep, context: DomNode, k: number, state: EvalS
             }
             break;
         }
-        case 'preceding':
-            for (let node = before(context); node !== null; node = before(node)) {
+        case 'preceding': {
+            const place = state.strict ? anchorOf(context) : context;
+            const ancestors = state.strict ? ancestorsOf(place) : null;
+            visits += ancestors?.size ?? 0;
+            for (let node = before(place); node !== null; node = before(node)) {
                 visits++;
-                if (match(node, state) && --left === 0) {
+                if (ancestors?.has(node) !== true && match(node, state) && --left === 0) {
                     found = node;
                     break;
                 }
             }
             break;
+        }
         default: {
             const all: DomNode[] = [];
             axisOf(step, context, state, all);
@@ -569,7 +633,8 @@ function applyPerContext(step: CompiledStep, list: NodeList, state: EvalState): 
         state.pure &&
         first !== undefined &&
         axis !== 'namespace' &&
-        (first.index !== null || (first.isLast && LAST_FROM_THE_FAR_END.has(axis)));
+        (first.index !== null ||
+            (first.isLast && LAST_FROM_THE_FAR_END.has(axis) && !(state.strict && axis === 'preceding')));
     for (let c = 0; c < input.length; c++) {
         const context = input[c];
         if (context === undefined) break;
@@ -581,7 +646,9 @@ function applyPerContext(step: CompiledStep, list: NodeList, state: EvalState): 
                     ? lastOnAxis(step, context, state)
                     : Number.isInteger(k) && k >= 1
                       ? nthOnAxis(step, context, k, state)
-                      : null;
+                      : // No node can be the k-th, but upstream still applies the node test to the candidates (and fails
+                        // on a prefix it cannot resolve), so the first one is tested.
+                        (nthOnAxis(step, context, 1, state), null);
             kept = hit === null ? [] : filterByPredicates([hit], predicates, 1, focus, state);
         } else {
             const candidates: DomNode[] = [];
@@ -651,7 +718,12 @@ function applyToSet(step: CompiledStep, list: NodeList, state: EvalState): void 
                 visits += count;
                 for (let i = 0; i < count; i++) {
                     const attribute = attributes?.item(i);
-                    if (attribute != null && passesAll(attribute, step, focus, state)) out.push(attribute);
+                    if (
+                        attribute != null &&
+                        !(state.strict && isNamespaceDeclaration(attribute)) &&
+                        passesAll(attribute, step, focus, state)
+                    )
+                        out.push(attribute);
                 }
             }
             list.flat = true;
@@ -709,7 +781,7 @@ function applyToSet(step: CompiledStep, list: NodeList, state: EvalState): void 
         case 'parent': {
             const seen = new Set<DomNode>();
             for (const context of input) {
-                const parent = axisParent(context);
+                const parent = axisParent(context, state.strict);
                 if (parent === null || seen.has(parent)) continue;
                 seen.add(parent);
                 if (passesAll(parent, step, focus, state)) out.push(parent);
@@ -724,9 +796,9 @@ function applyToSet(step: CompiledStep, list: NodeList, state: EvalState): void 
             const climbed = new Set<DomNode>();
             for (const context of input) {
                 for (
-                    let node = axis === 'ancestor' ? axisParent(context) : context;
+                    let node = axis === 'ancestor' ? axisParent(context, state.strict) : context;
                     node !== null && !climbed.has(node);
-                    node = axisParent(node)
+                    node = axisParent(node, state.strict)
                 ) {
                     visits++;
                     climbed.add(node);
@@ -803,11 +875,19 @@ function followingOfSet(
     const climbed = new Set<DomNode>();
     let anchor: DomNode | null = null;
     for (const context of input) {
-        const start = context.firstChild ?? context.nextSibling;
-        if (start != null) starts.add(start);
-        if (anchor === null && isTreeNode(context)) anchor = context;
+        // Strict (section 2.2): the following siblings, not the descendants; an attribute or namespace node stands
+        // before its element's children, which therefore follow it.
+        const place = state.strict ? anchorOf(context) : context;
+        if (state.strict) {
+            if (place !== context && place.firstChild != null) starts.add(place.firstChild);
+            if (place.nextSibling != null) starts.add(place.nextSibling);
+        } else {
+            const start = context.firstChild ?? context.nextSibling;
+            if (start != null) starts.add(start);
+        }
+        if (anchor === null && isTreeNode(place)) anchor = place;
         for (
-            let up = context.parentNode;
+            let up = place.parentNode;
             up != null && up.nodeType !== DOCUMENT_NODE && !climbed.has(up);
             up = up.parentNode
         ) {
@@ -935,7 +1015,12 @@ export function applyDescendantPair(step: CompiledStep, list: NodeList, state: E
         visits += count;
         for (let i = 0; i < count; i++) {
             const attribute = map?.item(i);
-            if (attribute != null && passesAll(attribute, step, focus, state)) out.push(attribute);
+            if (
+                attribute != null &&
+                !(state.strict && isNamespaceDeclaration(attribute)) &&
+                passesAll(attribute, step, focus, state)
+            )
+                out.push(attribute);
         }
     };
     let at = 0;
@@ -965,6 +1050,8 @@ export function applyDescendantPair(step: CompiledStep, list: NodeList, state: E
 /** Applies one step to the list, in place. */
 export function applyStep(step: CompiledStep, list: NodeList, state: EvalState): void {
     if (list.nodes.length === 0) return;
-    if (step.positional || !state.pure) applyPerContext(step, list, state);
+    // Strict: the preceding axis excludes ancestors, which the one-sweep set form (upstream's meaning of the axis) does not.
+    if (step.positional || !state.pure || (state.strict && step.axis === 'preceding'))
+        applyPerContext(step, list, state);
     else applyToSet(step, list, state);
 }
