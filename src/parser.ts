@@ -64,9 +64,12 @@ class Parser {
     #pos = 0;
     #depth = 0;
 
-    constructor(tokens: readonly Token[], maxDepth: number) {
+    readonly #strict: boolean;
+
+    constructor(tokens: readonly Token[], maxDepth: number, strict: boolean) {
         this.#tokens = tokens;
         this.#maxDepth = maxDepth;
+        this.#strict = strict;
     }
 
     parse(): Expr {
@@ -258,7 +261,10 @@ class Parser {
             axis = 'attribute';
         } else if (this.#peek().kind === 'axis') {
             // Q-AXIS: an unknown axis name is not a syntax error upstream; the step selects nothing.
-            axis = AXES.get(this.#peek().value) ?? 'unknown';
+            const known = AXES.get(this.#peek().value);
+            // Strict: an axis name that is not one of the thirteen is a syntax error.
+            if (known === undefined && this.#strict) throw new XPathSyntaxError(`Unknown axis ${this.#peek().value}`);
+            axis = known ?? 'unknown';
             this.#pos++;
             this.#expect('::');
         }
@@ -315,8 +321,8 @@ class Parser {
     }
 }
 
-export function parseXPath(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS): Expr {
+export function parseXPath(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS, strict: boolean = false): Expr {
     if (source.length > limits.maxLength)
         throw new XPathLimitError(`XPath expression is longer than ${limits.maxLength} characters`);
-    return new Parser(tokenize(source), limits.maxDepth).parse();
+    return new Parser(tokenize(source, strict), limits.maxDepth, strict).parse();
 }

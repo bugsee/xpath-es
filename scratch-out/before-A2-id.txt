@@ -1,0 +1,13 @@
+A id() 1000 tokens, doc 50000 elems                                  780 ms 1000
+A id() 1000 tokens, all MISSING                                     3363 ms 1
+A id() 10000 tokens, doc 50000 elems                                9143 ms 10000
+A id() 10000 tokens, all MISSING                                   41884 ms 1
+A id() 40000 tokens, doc 50000 elems                               74720 ms ERR XPathTimeoutError XPath evaluation exceeded its time limit of 10000 ms
+A id() 40000 tokens, all MISSING                                  101524 ms 1
+A2 id('x x x ...') 300k tokens, doc 20000                         171124 ms 1
+B id(//*) nesting 500                                                 17 ms 0
+B id(//*) nesting 2000                                               240 ms 0
+B id(//*) nesting 5000                                              1423 ms 0
+C count(//namespace::*) depth 200                                      4 ms 20300
+C count(//namespace::*) depth 800                                     64 ms 321200
+C count(//namespace::*) depth 2000                                   347 ms 2003000

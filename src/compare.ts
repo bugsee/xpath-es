@@ -23,20 +23,22 @@ function relate(op: Relational, a: number, b: number): boolean {
 
 const FLIP: Readonly<Record<Relational, Relational>> = { '<': '>', '<=': '>=', '>': '<', '>=': '<=' };
 
-function scalarToNumber(value: string | number | boolean): number {
+function scalarToNumber(value: string | number | boolean, strict: boolean): number {
     if (typeof value === 'number') return value;
-    return typeof value === 'string' ? stringToNumber(value) : value ? 1 : 0;
+    return typeof value === 'string' ? stringToNumber(value, strict) : value ? 1 : 0;
 }
 
 function anyNodeNumber(set: NodeSet, op: Relational, other: number, state: EvalState): boolean {
     state.charge(set.size);
-    for (const node of set.unordered) if (relate(op, stringToNumber(stringValueOf(node, state)), other)) return true;
+    for (const node of set.unordered)
+        if (relate(op, stringToNumber(stringValueOf(node, state), state.strict), other)) return true;
     return false;
 }
 
-function equalScalars(left: string | number | boolean, right: string | number | boolean): boolean {
+function equalScalars(left: string | number | boolean, right: string | number | boolean, strict: boolean): boolean {
     if (typeof left === 'boolean' || typeof right === 'boolean') return toBooleanValue(left) === toBooleanValue(right);
-    if (typeof left === 'number' || typeof right === 'number') return scalarToNumber(left) === scalarToNumber(right);
+    if (typeof left === 'number' || typeof right === 'number')
+        return scalarToNumber(left, strict) === scalarToNumber(right, strict);
     return left === right;
 }
 
@@ -45,7 +47,7 @@ function equalSetScalar(set: NodeSet, other: string | number | boolean, negate: 
     state.charge(set.size);
     for (const node of set.unordered) {
         const text = stringValueOf(node, state);
-        const equal = typeof other === 'number' ? stringToNumber(text) === other : text === other;
+        const equal = typeof other === 'number' ? stringToNumber(text, state.strict) === other : text === other;
         if (equal !== negate) return true;
     }
     return false;
@@ -71,13 +73,13 @@ function relateSets(left: NodeSet, right: NodeSet, op: Relational, state: EvalSt
     let seenA = false;
     let seenB = false;
     for (const node of left.unordered) {
-        const value = stringToNumber(stringValueOf(node, state));
+        const value = stringToNumber(stringValueOf(node, state), state.strict);
         if (Number.isNaN(value)) continue;
         seenA = true;
         a = less ? Math.min(a, value) : Math.max(a, value);
     }
     for (const node of right.unordered) {
-        const value = stringToNumber(stringValueOf(node, state));
+        const value = stringToNumber(stringValueOf(node, state), state.strict);
         if (Number.isNaN(value)) continue;
         seenB = true;
         b = less ? Math.max(b, value) : Math.min(b, value);
@@ -94,15 +96,15 @@ export function compareValues(op: BinaryOp, left: XValue, right: XValue, state: 
                 : equalSetScalar(left, right, negate, state);
         }
         if (right instanceof NodeSet) return equalSetScalar(right, left, negate, state);
-        return equalScalars(left, right) !== negate;
+        return equalScalars(left, right, state.strict) !== negate;
     }
     if (op !== '<' && op !== '<=' && op !== '>' && op !== '>=') return false;
     if (left instanceof NodeSet) {
         if (right instanceof NodeSet) return relateSets(left, right, op, state);
         if (typeof right === 'boolean') return relate(op, left.size > 0 ? 1 : 0, right ? 1 : 0);
-        return anyNodeNumber(left, op, scalarToNumber(right), state);
+        return anyNodeNumber(left, op, scalarToNumber(right, state.strict), state);
     }
-    const number = scalarToNumber(left);
+    const number = scalarToNumber(left, state.strict);
     if (right instanceof NodeSet) return anyNodeNumber(right, FLIP[op], number, state);
-    return relate(op, number, scalarToNumber(right));
+    return relate(op, number, scalarToNumber(right, state.strict));
 }

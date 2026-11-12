@@ -6,10 +6,10 @@
 //                                    import pointed at dist/ (so Node 20, which cannot strip types, can run them)
 //
 // Both outputs are ES2022: nothing is down-levelled (classes, #private members, optional chaining and so on stay as
-// written), and no TypeScript-only syntax survives (scripts/verify-dist.mjs and test/dist check this).
+// written), and no TypeScript-only syntax survives (test/dist checks this: `npm run test:dist`).
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -31,6 +31,30 @@ function retargetDeclarations(directory: string, extension: 'js' | 'cjs'): void 
         const file = path.join(directory, name);
         writeFileSync(file, readFileSync(file, 'utf8').replace(/(["'])(\.\/[^"']+)\.ts\1/g, `$1$2.${extension}$1`));
     }
+}
+
+/**
+ * Ships only the declarations the entry can reach. The engine's internal modules (the evaluation state, the compiler, the
+ * steps) have declarations of their own, and a consumer's editor would offer them; they are not part of the API, so only
+ * the files that `index.d.ts` (or `index.d.cts`) imports, directly or through each other, stay. The JavaScript stays: it
+ * is what the entry loads.
+ */
+function pruneDeclarations(directory: string, entry: string, extension: 'js' | 'cjs'): void {
+    const suffix = extension === 'js' ? '.d.ts' : '.d.cts';
+    const reachable = new Set<string>([entry]);
+    const pending = [entry];
+    for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+        const text = readFileSync(path.join(directory, file), 'utf8');
+        for (const match of text.matchAll(/(?:from\s+|import\()["']\.\/([^"']+)\.(?:js|cjs)["']/g)) {
+            const next = `${match[1] ?? ''}${suffix}`;
+            if (!reachable.has(next) && existsSync(path.join(directory, next))) {
+                reachable.add(next);
+                pending.push(next);
+            }
+        }
+    }
+    for (const name of readdirSync(directory))
+        if (name.endsWith(suffix) && !reachable.has(name)) rmSync(path.join(directory, name));
 }
 
 /** The CommonJS emit has `.js` / `.d.ts` / `.js.map` names and `./x.js` specifiers; dist/ wants `.cjs` / `.d.cts`. */
@@ -76,5 +100,7 @@ if (process.argv.includes('--tests')) {
     compile('tsconfig.build.cjs.json');
     mkdirSync(at('dist'), { recursive: true });
     convertCommonJs(at('.build-cjs'), at('dist'));
+    pruneDeclarations(at('dist'), 'index.d.ts', 'js');
+    pruneDeclarations(at('dist'), 'index.d.cts', 'cjs');
     rmSync(at('.build-cjs'), { recursive: true, force: true });
 }

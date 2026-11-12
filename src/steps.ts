@@ -131,9 +131,22 @@ function isTreeNode(node: DomNode): boolean {
 }
 
 /** Parent on the parent/ancestor axes: an attribute's owner element; Q-AXIS-1: a namespace node has none. */
-function axisParent(node: DomNode): DomNode | null {
+function axisParent(node: DomNode, strict: boolean): DomNode | null {
     if (node.nodeType === ATTRIBUTE_NODE) return node.ownerElement ?? null;
+    // Q-AXIS-1: upstream's namespace node has no parent. XPath 1.0 section 5.4: its parent is the element.
+    if (strict && node.nodeType === NAMESPACE_NODE) return node.ownerElement ?? null;
     return node.parentNode ?? null;
+}
+
+/** The node an attribute or namespace node hangs from; a tree node is its own place in the tree. */
+function anchorOf(node: DomNode): DomNode {
+    return node.nodeType === ATTRIBUTE_NODE || node.nodeType === NAMESPACE_NODE ? (node.ownerElement ?? node) : node;
+}
+
+/** Strict: a namespace declaration (`xmlns`, `xmlns:p`) is not an attribute of the element (section 5.3). */
+function isNamespaceDeclaration(attribute: DomNode): boolean {
+    const name = String(attribute.name ?? attribute.nodeName);
+    return name === 'xmlns' || name.startsWith('xmlns:');
 }
 
 /** Next node of a pre-order walk that stays inside the subtree of `root`. */
@@ -149,6 +162,25 @@ function following(node: DomNode, root: DomNode): DomNode | null {
         current = parent;
     }
     return null;
+}
+
+/**
+ * The node before `node` in document order: the deepest last descendant of its previous sibling, else its parent. A
+ * reverse axis is read this way, nearest first, so `preceding::x[1]` stops at the nearest x instead of walking the
+ * document from its root and reversing the list.
+ */
+function before(node: DomNode): DomNode | null {
+    let previous = node.previousSibling;
+    if (previous == null) return node.parentNode ?? null;
+    for (let last = previous.lastChild; last != null; last = previous.lastChild) previous = last;
+    return previous;
+}
+
+/** The ancestors of a node (the preceding axis of section 2.2 does not contain them). */
+function ancestorsOf(node: DomNode): Set<DomNode> {
+    const ancestors = new Set<DomNode>();
+    for (let up = node.parentNode; up != null; up = up.parentNode) ancestors.add(up);
+    return ancestors;
 }
 
 /** Next node of a pre-order walk that skips the subtree of `node`. */
@@ -174,11 +206,13 @@ function prefixOfDeclaration(attribute: DomNode): string | null {
  * The namespace axis. Q-AXIS-2: `xml` first, then every `xmlns` attribute from the element outwards, nearest
  * declaration of a prefix winning; an `xmlns=""` undeclaration still yields a node; each call makes new node objects.
  */
-function namespaceNodes(element: DomNode): NamespaceNode[] {
+function namespaceNodes(element: DomNode, state: EvalState): NamespaceNode[] {
     const out: NamespaceNode[] = [];
     if (element.nodeType !== ELEMENT_NODE) return out;
     const seen = new Set<string>(['xml']);
-    out.push(new NamespaceNode('xml', null, XML_NAMESPACE_URI, element, -1));
+    // The bindings first (charging the walk), the nodes after: a deep document with a new prefix per level has N bindings
+    // in scope at the deepest element, and every element on the way down makes a node for each of them.
+    const declarations: { prefix: string; attribute: DomNode; local: number }[] = [];
     for (
         let current: DomNode | null | undefined = element;
         current != null && current.nodeType === ELEMENT_NODE;
@@ -186,17 +220,31 @@ function namespaceNodes(element: DomNode): NamespaceNode[] {
     ) {
         const attributes = current.attributes;
         const count = attributes?.length ?? 0;
+        state.charge(count + 1);
         for (let i = 0; i < count; i++) {
             const attribute = attributes?.item(i);
             if (attribute == null) continue;
             const prefix = prefixOfDeclaration(attribute);
             if (prefix === null || seen.has(prefix)) continue;
             seen.add(prefix);
-            out.push(
-                new NamespaceNode(prefix, attribute, attribute.value ?? '', element, current === element ? i : -1)
-            );
+            declarations.push({ prefix, attribute, local: current === element ? i : -1 });
         }
     }
+    state.chargeNamespaceNodes(declarations.length + 1);
+    if (state.strict) {
+        // Section 5.4: one node per binding in scope, made once (a node-set holds it once however it is reached), and
+        // no node for `xmlns=""`, which says there is no default namespace.
+        out.push(state.internedNamespaceNode(element, 'xml', null, XML_NAMESPACE_URI, -1));
+        for (const { prefix, attribute, local } of declarations) {
+            const uri = attribute.value ?? '';
+            if (prefix === '' && uri === '') continue;
+            out.push(state.internedNamespaceNode(element, prefix, attribute, uri, local));
+        }
+        return out;
+    }
+    out.push(new NamespaceNode('xml', null, XML_NAMESPACE_URI, element, -1));
+    for (const { prefix, attribute, local } of declarations)
+        out.push(new NamespaceNode(prefix, attribute, attribute.value ?? '', element, local));
     return out;
 }
 
@@ -237,7 +285,12 @@ function axisOf(step: CompiledStep, context: DomNode, state: EvalState, out: Dom
             const count = attributes?.length ?? 0;
             for (let i = 0; i < count; i++) {
                 const attribute = attributes?.item(i);
-                if (attribute != null && match(attribute, state)) out.push(attribute);
+                if (
+                    attribute != null &&
+                    match(attribute, state) &&
+                    !(state.strict && isNamespaceDeclaration(attribute))
+                )
+                    out.push(attribute);
             }
             visits += count;
             break;
@@ -246,16 +299,16 @@ function axisOf(step: CompiledStep, context: DomNode, state: EvalState, out: Dom
             if (match(context, state)) out.push(context);
             break;
         case 'parent': {
-            const parent = axisParent(context);
+            const parent = axisParent(context, state.strict);
             if (parent !== null && match(parent, state)) out.push(parent);
             break;
         }
         case 'ancestor':
         case 'ancestor-or-self':
             for (
-                let node = step.axis === 'ancestor' ? axisParent(context) : context;
+                let node = step.axis === 'ancestor' ? axisParent(context, state.strict) : context;
                 node !== null;
-                node = axisParent(node)
+                node = axisParent(node, state.strict)
             ) {
                 visits++;
                 if (match(node, state)) out.push(node);
@@ -287,6 +340,18 @@ function axisOf(step: CompiledStep, context: DomNode, state: EvalState, out: Dom
             // Q-AXIS-3: upstream starts at the first child when there is one (so the context's own descendants are
             // "following" and its following siblings are not), else at the next sibling; then, for every ancestor
             // below the document node, at that ancestor's next sibling.
+            if (state.strict) {
+                // Section 2.2: everything after the context in document order except its descendants: the following
+                // siblings of the node and of each ancestor, with their subtrees. An attribute or namespace node
+                // comes after its element and before the element's children, so for it the children are following.
+                const place = anchorOf(context);
+                if (place !== context) visits += walkSubtrees(place.firstChild, step, state, out);
+                visits += walkSubtrees(place.nextSibling, step, state, out);
+                for (let up = place.parentNode; up != null && up.nodeType !== DOCUMENT_NODE; up = up.parentNode) {
+                    visits += walkSubtrees(up.nextSibling, step, state, out);
+                }
+                break;
+            }
             visits += walkSubtrees(context.firstChild ?? context.nextSibling, step, state, out);
             for (let up = context.parentNode; up != null && up.nodeType !== DOCUMENT_NODE; up = up.parentNode) {
                 visits += walkSubtrees(up.nextSibling, step, state, out);
@@ -295,18 +360,27 @@ function axisOf(step: CompiledStep, context: DomNode, state: EvalState, out: Dom
         }
         case 'preceding': {
             // Q-AXIS-4: everything before the context in document order, ancestors and the root included; nothing
-            // for an attribute or a namespace node (they are their own root here).
-            let root = context;
-            for (let up = root.parentNode; up != null; up = up.parentNode) root = up;
-            for (let node: DomNode | null = root; node !== null && node !== context; node = following(node, root)) {
+            // for an attribute or a namespace node (they are their own root here). Nearest first, as the axis is read.
+            if (state.strict) {
+                // Section 2.2: before the context in document order, ancestors excluded; an attribute or a namespace
+                // node stands where its element stands.
+                const place = anchorOf(context);
+                const ancestors = ancestorsOf(place);
+                visits += ancestors.size;
+                for (let node = before(place); node !== null; node = before(node)) {
+                    visits++;
+                    if (!ancestors.has(node) && match(node, state)) out.push(node);
+                }
+                break;
+            }
+            for (let node = before(context); node !== null; node = before(node)) {
                 visits++;
                 if (match(node, state)) out.push(node);
             }
-            out.reverse();
             break;
         }
         case 'namespace':
-            for (const node of namespaceNodes(context)) if (match(node, state)) out.push(node);
+            for (const node of namespaceNodes(context, state)) if (match(node, state)) out.push(node);
             break;
         case 'unknown':
             break;
@@ -351,9 +425,9 @@ function nthOnAxis(step: CompiledStep, context: DomNode, k: number, state: EvalS
         case 'ancestor':
         case 'ancestor-or-self':
             for (
-                let node = step.axis === 'ancestor' ? axisParent(context) : context;
+                let node = step.axis === 'ancestor' ? axisParent(context, state.strict) : context;
                 node !== null;
-                node = axisParent(node)
+                node = axisParent(node, state.strict)
             ) {
                 visits++;
                 if (match(node, state) && --left === 0) {
@@ -381,6 +455,19 @@ function nthOnAxis(step: CompiledStep, context: DomNode, k: number, state: EvalS
             }
             break;
         }
+        case 'preceding': {
+            const place = state.strict ? anchorOf(context) : context;
+            const ancestors = state.strict ? ancestorsOf(place) : null;
+            visits += ancestors?.size ?? 0;
+            for (let node = before(place); node !== null; node = before(node)) {
+                visits++;
+                if (ancestors?.has(node) !== true && match(node, state) && --left === 0) {
+                    found = node;
+                    break;
+                }
+            }
+            break;
+        }
         default: {
             const all: DomNode[] = [];
             axisOf(step, context, state, all);
@@ -392,15 +479,84 @@ function nthOnAxis(step: CompiledStep, context: DomNode, k: number, state: EvalS
     return found;
 }
 
-function lastChildMatching(step: CompiledStep, context: DomNode, state: EvalState): DomNode | null {
+/** Axes whose last node in axis order can be found from the far end, without listing the whole axis. */
+const LAST_FROM_THE_FAR_END: ReadonlySet<Axis> = new Set<Axis>([
+    'child',
+    'descendant',
+    'following-sibling',
+    'preceding-sibling',
+    'preceding'
+]);
+
+/**
+ * The last node of the axis (in axis order) that passes the test, searched from the end that is cheap: the far
+ * siblings, the far end of the document before the context, the last descendants. `[last()]` is then a walk to the
+ * first hit from that end, not a listing of the axis.
+ */
+function lastOnAxis(step: CompiledStep, context: DomNode, state: EvalState): DomNode | null {
     let visits = 1;
     let found: DomNode | null = null;
-    for (let node = context.lastChild; node != null; node = node.previousSibling) {
-        visits++;
-        if (step.match(node, state)) {
-            found = node;
+    const { match } = step;
+    switch (step.axis) {
+        case 'child':
+            for (let node = context.lastChild; node != null; node = node.previousSibling) {
+                visits++;
+                if (match(node, state)) {
+                    found = node;
+                    break;
+                }
+            }
+            break;
+        case 'following-sibling':
+            for (
+                let node = context.parentNode?.lastChild;
+                node != null && node !== context;
+                node = node.previousSibling
+            ) {
+                visits++;
+                if (match(node, state)) {
+                    found = node;
+                    break;
+                }
+            }
+            break;
+        case 'preceding-sibling':
+            // Axis order is nearest first, so the last is the first sibling of the parent that matches.
+            for (let node = context.parentNode?.firstChild; node != null && node !== context; node = node.nextSibling) {
+                visits++;
+                if (match(node, state)) {
+                    found = node;
+                    break;
+                }
+            }
+            break;
+        case 'descendant': {
+            let end: DomNode = context;
+            for (let last = end.lastChild; last != null; last = end.lastChild) end = last;
+            for (let node: DomNode | null = end; node !== null && node !== context; node = before(node)) {
+                visits++;
+                if (match(node, state)) {
+                    found = node;
+                    break;
+                }
+            }
             break;
         }
+        case 'preceding': {
+            // The farthest node before the context is the first matching one from the top of its tree.
+            let root = context;
+            for (let up = root.parentNode; up != null; up = up.parentNode) root = up;
+            for (let node: DomNode | null = root; node !== null && node !== context; node = following(node, root)) {
+                visits++;
+                if (match(node, state)) {
+                    found = node;
+                    break;
+                }
+            }
+            break;
+        }
+        default:
+            break;
     }
     state.charge(visits);
     return found;
@@ -477,7 +633,8 @@ function applyPerContext(step: CompiledStep, list: NodeList, state: EvalState): 
         state.pure &&
         first !== undefined &&
         axis !== 'namespace' &&
-        (first.index !== null || (first.isLast && axis === 'child'));
+        (first.index !== null ||
+            (first.isLast && LAST_FROM_THE_FAR_END.has(axis) && !(state.strict && axis === 'preceding')));
     for (let c = 0; c < input.length; c++) {
         const context = input[c];
         if (context === undefined) break;
@@ -486,10 +643,12 @@ function applyPerContext(step: CompiledStep, list: NodeList, state: EvalState): 
             const k = first.index;
             const hit =
                 k === null
-                    ? lastChildMatching(step, context, state)
+                    ? lastOnAxis(step, context, state)
                     : Number.isInteger(k) && k >= 1
                       ? nthOnAxis(step, context, k, state)
-                      : null;
+                      : // No node can be the k-th, but upstream still applies the node test to the candidates (and fails
+                        // on a prefix it cannot resolve), so the first one is tested.
+                        (nthOnAxis(step, context, 1, state), null);
             kept = hit === null ? [] : filterByPredicates([hit], predicates, 1, focus, state);
         } else {
             const candidates: DomNode[] = [];
@@ -559,7 +718,12 @@ function applyToSet(step: CompiledStep, list: NodeList, state: EvalState): void 
                 visits += count;
                 for (let i = 0; i < count; i++) {
                     const attribute = attributes?.item(i);
-                    if (attribute != null && passesAll(attribute, step, focus, state)) out.push(attribute);
+                    if (
+                        attribute != null &&
+                        !(state.strict && isNamespaceDeclaration(attribute)) &&
+                        passesAll(attribute, step, focus, state)
+                    )
+                        out.push(attribute);
                 }
             }
             list.flat = true;
@@ -617,7 +781,7 @@ function applyToSet(step: CompiledStep, list: NodeList, state: EvalState): void 
         case 'parent': {
             const seen = new Set<DomNode>();
             for (const context of input) {
-                const parent = axisParent(context);
+                const parent = axisParent(context, state.strict);
                 if (parent === null || seen.has(parent)) continue;
                 seen.add(parent);
                 if (passesAll(parent, step, focus, state)) out.push(parent);
@@ -632,9 +796,9 @@ function applyToSet(step: CompiledStep, list: NodeList, state: EvalState): void 
             const climbed = new Set<DomNode>();
             for (const context of input) {
                 for (
-                    let node = axis === 'ancestor' ? axisParent(context) : context;
+                    let node = axis === 'ancestor' ? axisParent(context, state.strict) : context;
                     node !== null && !climbed.has(node);
-                    node = axisParent(node)
+                    node = axisParent(node, state.strict)
                 ) {
                     visits++;
                     climbed.add(node);
@@ -682,7 +846,7 @@ function applyToSet(step: CompiledStep, list: NodeList, state: EvalState): void 
             for (const context of input) {
                 // Upstream sorts the nodes that pass the node test before it applies the predicates, which is where it
                 // fails on namespace nodes (Q-NS-ORDER): the test first, then the sort, then the predicates.
-                const candidates = namespaceNodes(context).filter((node) => step.match(node, state));
+                const candidates = namespaceNodes(context, state).filter((node) => step.match(node, state));
                 if (step.predicates.length > 0 && candidates.length > 1) state.sort(candidates);
                 for (const node of candidates) if (passesAll(node, step, focus, state)) out.push(node);
             }
@@ -711,11 +875,19 @@ function followingOfSet(
     const climbed = new Set<DomNode>();
     let anchor: DomNode | null = null;
     for (const context of input) {
-        const start = context.firstChild ?? context.nextSibling;
-        if (start != null) starts.add(start);
-        if (anchor === null && isTreeNode(context)) anchor = context;
+        // Strict (section 2.2): the following siblings, not the descendants; an attribute or namespace node stands
+        // before its element's children, which therefore follow it.
+        const place = state.strict ? anchorOf(context) : context;
+        if (state.strict) {
+            if (place !== context && place.firstChild != null) starts.add(place.firstChild);
+            if (place.nextSibling != null) starts.add(place.nextSibling);
+        } else {
+            const start = context.firstChild ?? context.nextSibling;
+            if (start != null) starts.add(start);
+        }
+        if (anchor === null && isTreeNode(place)) anchor = place;
         for (
-            let up = context.parentNode;
+            let up = place.parentNode;
             up != null && up.nodeType !== DOCUMENT_NODE && !climbed.has(up);
             up = up.parentNode
         ) {
@@ -843,7 +1015,12 @@ export function applyDescendantPair(step: CompiledStep, list: NodeList, state: E
         visits += count;
         for (let i = 0; i < count; i++) {
             const attribute = map?.item(i);
-            if (attribute != null && passesAll(attribute, step, focus, state)) out.push(attribute);
+            if (
+                attribute != null &&
+                !(state.strict && isNamespaceDeclaration(attribute)) &&
+                passesAll(attribute, step, focus, state)
+            )
+                out.push(attribute);
         }
     };
     let at = 0;
@@ -873,6 +1050,8 @@ export function applyDescendantPair(step: CompiledStep, list: NodeList, state: E
 /** Applies one step to the list, in place. */
 export function applyStep(step: CompiledStep, list: NodeList, state: EvalState): void {
     if (list.nodes.length === 0) return;
-    if (step.positional || !state.pure) applyPerContext(step, list, state);
+    // Strict: the preceding axis excludes ancestors, which the one-sweep set form (upstream's meaning of the axis) does not.
+    if (step.positional || !state.pure || (state.strict && step.axis === 'preceding'))
+        applyPerContext(step, list, state);
     else applyToSet(step, list, state);
 }

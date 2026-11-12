@@ -5,11 +5,13 @@
 import { loadModule, loadOracle, loadCandidate, loadXPath, DEFAULT_CANDIDATE } from '../test/harness.ts';
 import type { DomNode } from '../test/support/dom.ts';
 
-export type EngineName = 'upstream' | 'fork' | 'candidate';
-export const ENGINE_NAMES: readonly EngineName[] = ['upstream', 'candidate', 'fork'];
+/** `reference`: not an engine but the case's own plain-DOM answer (bench/hostile-cases.ts). */
+export type EngineName = 'upstream' | 'fork' | 'candidate' | 'reference';
+export const ENGINE_NAMES: readonly EngineName[] = ['upstream', 'candidate', 'fork', 'reference'];
 /** What the tables show when ENGINES is not set. */
 export const DEFAULT_ENGINES: readonly EngineName[] = ['upstream', 'candidate'];
-export type Select = (expression: string, node: DomNode) => unknown;
+/** One selection; `namespaces` makes it a selection with a namespace resolver (useNamespaces). */
+export type Select = (expression: string, node: DomNode, namespaces?: Readonly<Record<string, string>>) => unknown;
 
 export function isEngineName(value: string): value is EngineName {
     return ENGINE_NAMES.some((name) => name === value);
@@ -21,11 +23,15 @@ export function chosenEngines(): readonly EngineName[] {
 }
 
 export function loadEngine(name: EngineName): Select {
+    if (name === 'reference') throw new Error('the reference answer is not an engine');
     const legacy =
         name === 'upstream'
             ? loadOracle()
             : name === 'fork'
               ? loadXPath(loadModule(DEFAULT_CANDIDATE))
               : loadCandidate();
-    return (expression, node) => legacy.select(expression, node);
+    return (expression, node, namespaces) =>
+        namespaces === undefined
+            ? legacy.select(expression, node)
+            : legacy.selectWithNamespaces(expression, node, namespaces);
 }

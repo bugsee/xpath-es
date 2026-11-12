@@ -11,7 +11,14 @@
 // reported, so the baseline can shrink when that is stable. A wrong result or an error is never baselined. Without a baseline file, or
 // with HOSTILE_STRICT=1, a candidate is judged strictly.
 //
+// Cases marked `engineOnly` (the engine's limits, its resolver and id() paths) run only with HOSTILE_ENGINE_CASES=1: a
+// candidate without those limits (the bugsee/xpath fork) is judged on the original cases. A case marked `expect: 'refuse'`
+// passes when the candidate stops with a typed limit, budget or timeout error within the bound (the oracle's answer is
+// recorded, but nobody should be made to build it). Every case that runs must have an oracle digest: one without is a
+// failure of the gate, not a pass on time alone.
+//
 //   node test/hostile.ts
+//   HOSTILE_ENGINE_CASES=1 CANDIDATE=./src/index.ts node test/hostile.ts
 //   HOSTILE_ONLY='deep|siblings' node test/hostile.ts      only the cases whose name or number matches
 //   CANDIDATE=./my-engine.js BASELINE=./my-baseline.json node test/hostile.ts
 
@@ -26,6 +33,7 @@ const boundMs = Number(process.env['HOSTILE_BOUND_MS'] ?? 10_000);
 const killAfterMs = boundMs + 5_000;
 const only = process.env['HOSTILE_ONLY'] === undefined ? null : new RegExp(process.env['HOSTILE_ONLY']);
 const strict = process.env['HOSTILE_STRICT'] === '1';
+const engineCases = process.env['HOSTILE_ENGINE_CASES'] === '1';
 // The scripts also run compiled to plain JavaScript (npm run build:tests, into dist-tests/): the runner is then the
 // compiled sibling, and the baselines, which are not compiled, are looked up in the working directory (the repository).
 const here = path.resolve(import.meta.dirname, '..');
@@ -90,8 +98,11 @@ const oracle = loadOracleDigests();
 const baseline = loadBaseline();
 const rows: Row[] = [];
 
+const REFUSALS = new Set(['LIMIT', 'BUDGET', 'TIMEOUT']);
+
 CASES.forEach((item, at) => {
     if (only !== null && !only.test(item.name) && !only.test(String(at))) return;
+    if (item.engineOnly === true && !engineCases) return;
     const child = spawnSync(process.execPath, [runner, 'candidate', String(at)], {
         timeout: killAfterMs,
         killSignal: 'SIGKILL',
@@ -116,9 +127,38 @@ CASES.forEach((item, at) => {
         return;
     }
     const expected = oracle.get(item.name);
-    if (parsed.error !== null)
+    if (expected === undefined)
+        rows.push({
+            at,
+            name: item.name,
+            verdict: 'error',
+            ms: parsed.ms,
+            note: 'no oracle digest for this case (node test/hostile-digests.ts)'
+        });
+    else if (item.expect === 'refuse') {
+        // The candidate must refuse, with a typed error, and quickly: an answer would have been the oracle's.
+        if (parsed.errorCode !== null && REFUSALS.has(parsed.errorCode))
+            rows.push({
+                at,
+                name: item.name,
+                verdict: parsed.ms > boundMs ? 'slow' : 'ok',
+                ms: parsed.ms,
+                note: `refused: ${parsed.errorCode}`
+            });
+        else
+            rows.push({
+                at,
+                name: item.name,
+                verdict: 'wrong',
+                ms: parsed.ms,
+                note:
+                    parsed.error === null
+                        ? 'answered a case it must refuse'
+                        : `failed with ${parsed.error.slice(0, 80)}, not a typed limit`
+            });
+    } else if (parsed.error !== null)
         rows.push({ at, name: item.name, verdict: 'error', ms: parsed.ms, note: parsed.error.slice(0, 100) });
-    else if (expected !== undefined && expected !== parsed.digest)
+    else if (expected !== parsed.digest)
         rows.push({
             at,
             name: item.name,
@@ -132,7 +172,7 @@ CASES.forEach((item, at) => {
             name: item.name,
             verdict: parsed.ms > boundMs ? 'slow' : 'ok',
             ms: parsed.ms,
-            note: expected === undefined ? 'oracle result unknown: time only' : ''
+            note: ''
         });
 });
 
@@ -140,7 +180,7 @@ const failures: Row[] = [];
 const known: Row[] = [];
 const nowFast: Row[] = [];
 console.log(
-    `candidate ${candidateSpec()}; bound ${boundMs} ms per case; baseline ${baseline.file === null ? 'none (strict)' : path.relative(root, baseline.file)}; oracle digests for ${oracle.size} of ${CASES.length} cases`
+    `candidate ${candidateSpec()}; bound ${boundMs} ms per case; baseline ${baseline.file === null ? 'none (strict)' : path.relative(root, baseline.file)}; oracle digests for ${oracle.size} of ${CASES.length} cases${engineCases ? '' : ' (engine-only cases not run)'}`
 );
 console.log('| # | case | time | result |');
 console.log('|---|---|---:|---|');

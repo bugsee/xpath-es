@@ -12,12 +12,12 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
@@ -28,28 +28,45 @@ jobs:
     runs-on: ubuntu-latest
     needs: check
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       # The harness tests itself first: a gate that never fails is worth nothing.
       - run: npm run test:harness
-      # The candidate (the bugsee/xpath fork by default) against upstream xpath: random documents with the whole
-      # corpus, the mutation scenarios, and random expressions.
+      # The engine (src) against upstream xpath: random documents with the whole corpus, the mutation scenarios, and
+      # random expressions. A candidate that does not come back within the time limit fails the run.
       - run: npm run test:differential
+
+  # The bugsee/xpath fork that the appserver ships today, against upstream, as before: documents and scenarios block.
+  # The expression fuzzer is informational for the fork: the fork has no hoisting of nested absolute paths, so it does
+  # not come back on some random `//a[//b[...]]` expressions (the engine does; the engine's run above gates).
+  fork:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:differential:fork
+      - run: npm run test:fuzz-expr:fork
+        continue-on-error: true
 
   hostile:
     runs-on: ubuntu-latest
     needs: check
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       # Judged with the candidate's baseline (baselines/xpath-fork.json): known-slow shapes are listed, not failed.
       - run: npm run test:hostile
 
@@ -59,12 +76,12 @@ jobs:
     env:
       CANDIDATE: ./src/index.ts
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       # Gated: xmldom 0.8 (what the SAML libraries use): equal to upstream except for class 5 (CLASSIFY=ns-duplicate,
       # see the README); xmldom 0.9: the split gate (CLASSIFY=all: no difference where both engines answer, apart from
       # class 5, and the rest must fall in the documented classes). The other DOMs are compared in the nightly run and
@@ -75,19 +92,26 @@ jobs:
       - run: node test/mutation.ts
       - run: CLASSIFY=ns-duplicate node test/fuzz-expr.ts xmldom08 60 100 31 ns 5000
       - run: CLASSIFY=all node test/fuzz-expr.ts xmldom09 60 100 31 ns 5000
-      - run: HOSTILE_STRICT=1 node test/hostile.ts
+      - run: node test/mode-agreement.ts 60 100 31
+      # Cases marked engineOnly (the limits, the resolver and id() paths) run only for the engine; every case has an
+      # oracle digest, and the cases the engine must refuse have to stop with a typed error.
+      - run: HOSTILE_ENGINE_CASES=1 HOSTILE_STRICT=1 node test/hostile.ts
+      # Signature wrapping and other tampering with a signed response through samlify and xml-crypto, upstream against
+      # the engine: the same accept or reject, the same extracted values.
+      - run: npm run fixtures
+      - run: npm run test:wrapping
 
   # The shipped output, not the sources: build once, then judge dist/ the way a consumer runs it.
   build:
     runs-on: ubuntu-latest
     needs: check
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       # The tests and benchmarks compiled to plain JavaScript, their engine import pointed at dist/, so that Node 20
       # (which cannot strip types) runs the same suites.
@@ -95,7 +119,7 @@ jobs:
       # A TypeScript consumer (ES2022 + DOM libraries, no Node typings) compiles against the declarations through the
       # exports map, for both the "import" and the "require" condition.
       - run: npm run test:dist:types
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: built
           path: |
@@ -114,13 +138,13 @@ jobs:
       matrix:
         node: [20, 22, 24]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --ignore-scripts
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: built
       - run: node --version && npm run test:built
@@ -131,34 +155,49 @@ jobs:
     # Pinned to 24.04, Playwright's supported baseline, so that the ubuntu-latest move to 26.04 cannot change the job.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # WebKit needs system libraries that only apt can install, and the runners could not reach the Ubuntu mirrors when
-    # this job was added (Chromium and Firefox run on the runner image as it is). Until apt works there, WebKit is
-    # reported but does not block; it passes locally (WebKit 27.2, 9 of 9 checks).
-    continue-on-error: ${{ matrix.browser == 'webkit' }}
     needs: build
     strategy:
       fail-fast: false
       matrix:
         browser: [chromium, firefox, webkit]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - uses: actions/download-artifact@v8
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: built
-      # The browser's system packages come from apt. When the Ubuntu mirrors cannot be reached ("Temporary failure
-      # resolving", as on the first runs of this job) the apt step is abandoned after three minutes and the browser is
-      # installed without system packages: Chromium and Firefox then run on what the runner image already has, and a
-      # missing library is reported by Playwright when the browser starts.
-      - name: Install the browser (and its system packages when apt is reachable)
-        timeout-minutes: 10
+      # The browser's system packages come from apt, and the runners' Ubuntu mirrors fail transiently ("Temporary failure
+      # resolving"). The install is retried, each attempt bounded in time. Chromium and Firefox then fall back to what the
+      # runner image already has; WebKit has no such fallback (it needs system libraries only apt installs), so a persistent
+      # apt failure fails the WebKit job rather than being waved through.
+      - name: Install the browser and its system packages
+        timeout-minutes: 15
         run: |
-          if ! timeout 180 npx playwright install --with-deps ${{ matrix.browser }}; then
-            echo "::warning::apt was not usable; installing ${{ matrix.browser }} without system packages"
-            npx playwright install ${{ matrix.browser }}
-          fi
+          for attempt in 1 2 3; do
+            if timeout 180 npx playwright install --with-deps ${{ matrix.browser }}; then exit 0; fi
+            echo "::warning::attempt $attempt to install ${{ matrix.browser }} with its system packages failed"
+            sleep $((attempt * 20))
+          done
+          if [ "${{ matrix.browser }}" = webkit ]; then exit 1; fi
+          echo "::warning::installing ${{ matrix.browser }} without system packages"
+          npx playwright install ${{ matrix.browser }}
       - run: node test/browser/run.mjs ${{ matrix.browser }}
+
+  # The suite is tested too: each mutant is the engine with one deliberately wrong change (the reviewer's planted off-by-one
+  # among them); the checks must fail on every one.
+  mutants:
+    runs-on: ubuntu-latest
+    needs: check
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:mutants

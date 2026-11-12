@@ -45,7 +45,7 @@ check('namespaces', () => {
     equal(xpath.useNamespaces({ p: 'urn:a' })('//p:x', doc).length, 1);
     equal(xpath.select('//*[local-name() = "x" and namespace-uri() = "urn:a"]', doc).length, 1);
     // The typed API resolves a prefix from the document itself.
-    equal(new xpath.XPathProgram('//a:x').run({ node: doc }).value.size, 1);
+    equal(new xpath.XPathProgram('//a:x').run({ node: doc }).value.length, 1);
     // A prefix with no resolver is an error, as in upstream.
     let unresolved = null;
     try {
@@ -87,8 +87,12 @@ check('the time limit (performance.now in the browser) stops an evaluation with 
     const started = performance.now();
     let caught = null;
     try {
-        // string(/) walks the whole document for every candidate: quadratic work only the clock can stop.
-        new xpath.XPathProgram('count(//a[contains(string(/), "y")])').run({ node: doc, budget: 0, timeoutMs: 20 });
+        // every candidate walks everything before it: quadratic work only the clock can stop.
+        new xpath.XPathProgram('count(//a[count(preceding::a) >= 0])').run({
+            node: doc,
+            budget: 0,
+            timeoutMs: 20
+        });
     } catch (error) {
         caught = error;
     }

@@ -10,6 +10,7 @@
 //   CLASSIFY=all|ns-duplicate  the split gate: differences in the documented classes (see test/fuzz.ts) are counted
 //   apart and do not fail the run; every other difference does
 
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { isReport } from './fuzz-expr-worker.ts';
@@ -45,6 +46,18 @@ function runBatch(job: Job): Promise<number> {
             else slow.candidate++;
             if (slowSamples.length < 5)
                 slowSamples.push(`${candidateDone ? 'upstream' : 'candidate'}: ${job.expressions[current] ?? ''}`);
+            // FUZZ_DUMP=<file prefix> keeps the document, the expression and the context picks of a slow case.
+            const dump = process.env['FUZZ_DUMP'];
+            if (dump !== undefined)
+                writeFileSync(
+                    `${dump}-${slow.candidate + slow.upstream}-${candidateDone ? 'upstream' : 'candidate'}.json`,
+                    JSON.stringify({
+                        dom: job.dom,
+                        xml: job.xml,
+                        expression: job.expressions[current],
+                        picks: job.picks
+                    })
+                );
             void worker.terminate().then(() => resolve(current));
         }
         worker.on('message', (message: unknown) => {
@@ -82,7 +95,7 @@ function runBatch(job: Job): Promise<number> {
 const started = Date.now();
 let generated = 0;
 for (let d = 0; d < documents; d++) {
-    const xml = documentText(random);
+    const xml = documentText(random, { wide: 0.01 });
     let expressions: string[] = [];
     for (let e = 0; e < perDocument; e++) expressions.push(nextExpression());
     generated += expressions.length;
@@ -109,8 +122,12 @@ const tolerated = new Set((process.env['TOLERATE'] ?? '').split(','));
 // A run that compared nothing proves nothing.
 const comparedNothing = compared === 0 && documents > 0 && perDocument > 0;
 if (comparedNothing) console.log(`no expression was compared (${unparsable} of ${documents} documents did not parse)`);
+// Upstream is exponential in the number of steps on some random paths, so its timeouts are counted and tolerated. A
+// candidate that does not come back is a defect: the run fails.
+if (slow.candidate > 0)
+    console.log(`the candidate did not come back within ${limit} ms on ${slow.candidate} expressions`);
 const differences =
     (tolerated.has('result') ? 0 : tally.result) +
     (tolerated.has('mixed') ? 0 : tally.mixed) +
     (tolerated.has('order') ? 0 : tally.order);
-process.exitCode = comparedNothing || differences > 0 ? 1 : 0;
+process.exitCode = comparedNothing || slow.candidate > 0 || differences > 0 ? 1 : 0;

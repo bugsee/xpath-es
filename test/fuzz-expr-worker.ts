@@ -4,8 +4,10 @@
 
 import { parentPort } from 'node:worker_threads';
 import { allNodes, describe, errorText, isDomName, loadCandidate, loadDom, loadOracle } from './harness.ts';
+import type { XPathLike } from './harness.ts';
 import { allowedClasses, classifyDifference } from './support/classify.ts';
 import type { DomNode } from './support/dom.ts';
+import { categoryOfDescription } from './support/errors.ts';
 import { loadInternedOracle } from './support/interned-oracle.ts';
 
 /** `documented`: a difference in a documented class (CLASSIFY, see the README); it does not fail the run. */
@@ -76,7 +78,8 @@ function run(job: Job, send: (report: Report) => void): void {
     const contexts: DomNode[] = [doc];
     for (const pick of job.picks) {
         const node = nodes[Math.floor(pick * nodes.length)];
-        if (node !== undefined) contexts.push(node);
+        // A document type, entity or notation is not a node of the XPath data model: upstream's string value of one is null.
+        if (node !== undefined && ![5, 6, 10, 12].includes(node.nodeType)) contexts.push(node);
     }
     const attempt = (select: () => unknown): string => {
         try {
@@ -85,21 +88,57 @@ function run(job: Job, send: (report: Report) => void): void {
             return `ERR ${errorText(error)}`;
         }
     };
+    // Expressions that use a variable, a custom function or a prefix are evaluated through the evaluator object, with the
+    // same variables, functions and namespace resolver (a map, or a function, alternately) given to both engines. The
+    // answer is the string value and, when it is a node-set, the nodes. This puts the engine's impure paths (caller code
+    // that may change the document) and its resolver paths in front of the differential fuzzer.
+    const extras = /\$[a-z]|\b[fg]\(|[A-Za-z]:[A-Za-z*]/;
+    const evaluate = (
+        engine: XPathLike,
+        expression: string,
+        node: DomNode,
+        limits?: Readonly<Record<string, unknown>>
+    ): unknown => {
+        if (!extras.test(expression)) return engine.select(expression, node, false, limits);
+        const resolver =
+            expression.length % 2 === 0
+                ? { p: 'urn:p', q: 'urn:q' }
+                : {
+                      getNamespace: (prefix: string): string | null =>
+                          prefix === 'p' ? 'urn:p' : prefix === 'q' ? 'urn:q' : null
+                  };
+        const options = {
+            node,
+            variables: { v: 'x', n: 2, b: true },
+            functions: { f: (): number => 3, g: (_context: unknown, value: unknown): unknown => value },
+            namespaces: resolver,
+            ...limits
+        };
+        const text = engine.evaluateString(expression, options);
+        let nodes: string;
+        try {
+            nodes = describe(engine.parseSelect(expression, options), index);
+        } catch (error) {
+            nodes = `n/a: ${categoryOfDescription(`ERR ${errorText(error)}`)}`;
+        }
+        return `${String(text)} | ${nodes}`;
+    };
     job.expressions.forEach((expression, at) => {
-        const actual = contexts.map((node) => attempt(() => candidate.select(expression, node)));
+        const actual = contexts.map((node) => attempt(() => evaluate(candidate, expression, node)));
         send({ type: 'candidate-done', at });
         const kinds: Kind[] = [];
         const shapes: ('node-set' | 'scalar' | 'error')[] = [];
         let sample: string | null = null;
         contexts.forEach((node, c) => {
-            const expected = attempt(() => upstream.select(expression, node));
+            const expected = attempt(() => evaluate(upstream, expression, node));
             const got = actual[c] ?? '';
             const a = expected.startsWith('ERR');
             const b = got.startsWith('ERR');
             shapes.push(a ? 'error' : expected.startsWith('[') ? 'node-set' : 'scalar');
             let kind: Kind = 'result';
             if (expected === got) kind = 'equal';
-            else if (a && b) kind = 'message';
+            else if (a && b)
+                kind = categoryOfDescription(expected) === categoryOfDescription(got) ? 'message' : 'result';
             else if (!a && !b && members(expected).join() === members(got).join()) kind = 'order';
             else if (special(expected) || special(got) || node.nodeType === 2) kind = 'mixed';
             if (classify !== '' && (kind === 'result' || kind === 'mixed' || kind === 'order')) {
@@ -110,7 +149,8 @@ function run(job: Job, send: (report: Report) => void): void {
                     expected,
                     got,
                     () => attempt(() => interned.select(expression, node)),
-                    allowed
+                    allowed,
+                    () => attempt(() => evaluate(candidate, expression, node, { budget: 0, timeoutMs: 0 }))
                 );
                 if (documented !== null) kind = 'documented';
             }

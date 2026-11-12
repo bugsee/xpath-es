@@ -3,10 +3,25 @@
 // carry upstream's messages.
 
 import type { StaticType } from './ast.ts';
-import { ATTRIBUTE_NODE, DOCUMENT_NODE, ELEMENT_NODE, PROCESSING_INSTRUCTION_NODE, XML_NAMESPACE_URI } from './dom.ts';
+import {
+    ATTRIBUTE_NODE,
+    DOCUMENT_NODE,
+    ELEMENT_NODE,
+    NAMESPACE_NODE,
+    PROCESSING_INSTRUCTION_NODE,
+    XML_NAMESPACE_URI
+} from './dom.ts';
 import type { DomNode } from './dom.ts';
-import { XPathTypeError } from './errors.ts';
-import { NodeSet, stringToNumber, stringValueOf, toBooleanValue, toNumberValue, toStringValue } from './runtime.ts';
+import { XPathLimitError, XPathTypeError } from './errors.ts';
+import {
+    MAX_STRING_LENGTH,
+    NodeSet,
+    stringToNumber,
+    stringValueOf,
+    toBooleanValue,
+    toNumberValue,
+    toStringValue
+} from './runtime.ts';
 import type { Compiled, EvalState, Focus } from './runtime.ts';
 
 export const CORE_RETURN_TYPES: ReadonlyMap<string, StaticType> = new Map<string, StaticType>([
@@ -103,7 +118,141 @@ function normalizeSpace(text: string): string {
     }
     return out;
 }
+/** String(value) without the lint's worry: a DOM node's own toString() is what Q-FN-ID wants. */
+const stringify: (value: unknown) => string = String;
 const ID_SEPARATOR = /[\r\n\t ]+/;
+/** Distinct tokens one id() call may look up. */
+const MAX_ID_TOKENS = 10_000;
+/** Up to this many tokens go to the DOM's getElementById; more use one index of the document. */
+const FEW_ID_TOKENS = 8;
+
+/** The string-values of a node-set, joined by spaces (strict id(), section 4.1). */
+function stringValues(set: NodeSet, state: EvalState): string {
+    const parts: string[] = [];
+    let length = 0;
+    for (const node of set.sorted(state)) {
+        const text = stringValueOf(node, state);
+        length += text.length + 1;
+        if (length > MAX_STRING_LENGTH) throw new XPathLimitError('id() argument is too long');
+        parts.push(text);
+    }
+    return parts.join(' ');
+}
+
+/**
+ * The text id() takes from a node-set: the nodes' serialisations, joined by spaces (Q-FN-ID). Serialising an element
+ * walks its subtree, so the walk is charged first, and a document whose nodes nest deeply (every serialisation holds
+ * the whole chain below it) runs out of budget instead of building gigabytes.
+ */
+function serialisedIds(set: NodeSet, state: EvalState): string {
+    const parts: string[] = [];
+    let length = 0;
+    for (const node of set.sorted(state)) {
+        let size = 1;
+        for (let walk: DomNode | null | undefined = node.firstChild; walk != null;) {
+            if (++size % 4096 === 0) state.charge(4096);
+            let next: DomNode | null | undefined = walk.firstChild;
+            while (next == null && walk != null && walk !== node) {
+                next = walk.nextSibling;
+                if (next == null) walk = walk.parentNode;
+            }
+            walk = next;
+        }
+        state.charge(size % 4096);
+        const text = stringify(node);
+        length += text.length + 1;
+        if (length > MAX_STRING_LENGTH) throw new XPathLimitError('id() argument is too long');
+        state.charge(text.length >> 3);
+        parts.push(text);
+    }
+    return parts.join(' ');
+}
+
+/**
+ * Q-FN-LANG: the first ancestor-or-self whose getAttributeNS() answers anything but null decides, so on a DOM that
+ * answers '' for a missing attribute only the context node is ever looked at. The answer for a node is that of the
+ * nearest decided ancestor, so each node is looked at once per evaluation (a deep document with lang() on every node
+ * is linear, not quadratic), and each step is charged.
+ */
+function languageOf(start: DomNode, state: EvalState): string | null {
+    const walked: DomNode[] = [];
+    let language: string | null = null;
+    for (
+        let node: DomNode | null | undefined = start;
+        node != null && node.nodeType !== DOCUMENT_NODE;
+        node = node.parentNode
+    ) {
+        const known = state.languages.get(node);
+        if (known !== undefined) {
+            language = known;
+            break;
+        }
+        state.charge(1);
+        if (node.getAttributeNS === undefined) throw new XPathTypeError('Function lang needs an element context');
+        walked.push(node);
+        const value = node.getAttributeNS(XML_NAMESPACE_URI, 'lang');
+        if (value != null) {
+            language = String(value);
+            break;
+        }
+    }
+    for (const node of walked) state.languages.set(node, language);
+    return language;
+}
+
+/**
+ * Section 4.3 (strict): the xml:lang attribute of the nearest ancestor-or-self element decides; an attribute or
+ * namespace node is looked at from its element. Each element is looked at once per evaluation.
+ */
+function strictLanguageOf(start: DomNode, state: EvalState): string | null {
+    const walked: DomNode[] = [];
+    let language: string | null = null;
+    let node: DomNode | null | undefined =
+        start.nodeType === ATTRIBUTE_NODE || start.nodeType === NAMESPACE_NODE ? start.ownerElement : start;
+    for (; node != null && node.nodeType !== DOCUMENT_NODE; node = node.parentNode) {
+        const known = state.languages.get(node);
+        if (known !== undefined) {
+            language = known;
+            break;
+        }
+        walked.push(node);
+        const attributes = node.attributes;
+        const count = attributes?.length ?? 0;
+        state.charge(count + 1);
+        let found: string | null = null;
+        for (let i = 0; i < count && found === null; i++) {
+            const attribute = attributes?.item(i);
+            if (attribute != null && String(attribute.name ?? attribute.nodeName) === 'xml:lang')
+                found = String(attribute.value ?? attribute.nodeValue ?? '');
+        }
+        if (found !== null) {
+            language = found;
+            break;
+        }
+    }
+    for (const visited of walked) state.languages.set(visited, language);
+    return language;
+}
+
+/**
+ * Section 4.2 (strict), from the text of the Recommendation: the characters from position round(start) up to, not
+ * including, round(start) + round(length) (to the end without a length); NaN gives the empty string; the arithmetic is
+ * done on doubles, so -Infinity and +Infinity clamp to the ends. `substring("12345", 1.5, 2.5)` is "234",
+ * `substring("12345", 0, 3)` is "12", `substring("12345", 0 div 0)` is "".
+ */
+export function strictSubstring(text: string, start: number, length: number | undefined): string {
+    const first = Math.round(start);
+    if (Number.isNaN(first)) return '';
+    let end = Number.POSITIVE_INFINITY;
+    if (length !== undefined) {
+        end = first + Math.round(length);
+        if (Number.isNaN(end)) return '';
+    }
+    const characters = Array.from(text);
+    const low = Math.max(first, 1);
+    const high = Math.min(end, characters.length + 1);
+    return low < high ? characters.slice(low - 1, high - 1).join('') : '';
+}
 
 export function compileCoreFunction(name: string, args: readonly Compiled[]): Compiled | null {
     switch (name) {
@@ -124,17 +273,41 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                 const arg = args[0];
                 if (arg === undefined || args.length !== 1) throw expects(name, '(object)');
                 const value = arg(focus, state);
-                // Q-FN-ID: for a node-set upstream joins the nodes' own toString() (their serialisation), not their
-                // string-values.
+                // Upstream (Q-FN-ID) joins a node-set's nodes' own toString() (their serialisation); strict uses their
+                // string-values, as section 4.1 says.
                 const text =
-                    value instanceof NodeSet ? value.sorted(state).map(String).join(' ') : toStringValue(value, state);
+                    value instanceof NodeSet
+                        ? state.strict
+                            ? stringValues(value, state)
+                            : serialisedIds(value, state)
+                        : toStringValue(value, state);
+                if (text.length > MAX_STRING_LENGTH) throw new XPathLimitError('id() argument is too long');
+                state.charge((text.length >> 3) + 1);
                 const document = focus.node.nodeType === DOCUMENT_NODE ? focus.node : focus.node.ownerDocument;
                 if (document == null || document.getElementById === undefined)
                     throw new XPathTypeError('Function id needs a document with getElementById');
+                const tokens = new Set<string>(text.split(ID_SEPARATOR));
+                if (tokens.size > MAX_ID_TOKENS)
+                    throw new XPathLimitError(`id() with more than ${MAX_ID_TOKENS} distinct tokens`);
+                state.charge(tokens.size);
                 const found = new Set<DomNode>();
-                for (const id of text.split(ID_SEPARATOR)) {
-                    const element = document.getElementById(id);
-                    if (element != null) found.add(element);
+                if (tokens.size <= FEW_ID_TOKENS && !state.strict) {
+                    // A few tokens: the DOM's own lookup, so that its rules for what an ID is stay its own.
+                    for (const id of tokens) {
+                        state.charge(1);
+                        const element = document.getElementById(id);
+                        if (element != null) found.add(element);
+                    }
+                } else {
+                    // One element per distinct token, the first in document order (a duplicate ID is an error in the
+                    // document; id() does not report it, and browsers do not either).
+                    const index = state.elementsById(document);
+                    for (const id of tokens) {
+                        // The empty token (from a leading separator) is the DOM's own business: xmldom's getElementById('')
+                        // answers the first element, since a missing id attribute reads as ''. Upstream asks the DOM.
+                        const element = id === '' && !state.strict ? document.getElementById('') : index.get(id);
+                        if (element != null) found.add(element);
+                    }
                 }
                 return new NodeSet([...found], false);
             };
@@ -165,8 +338,14 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
             return (focus, state) => {
                 if (args.length < 2) throw expects(name, '(string, string[, string]*)');
                 let text = '';
-                for (const arg of args) text += toStringValue(arg(focus, state), state);
-                state.charge(text.length >> 4);
+                for (const arg of args) {
+                    const part = toStringValue(arg(focus, state), state);
+                    // Before the string is built: nested concat() can double a string per level.
+                    if (text.length + part.length > MAX_STRING_LENGTH)
+                        throw new XPathLimitError(`concat() would make a string longer than ${MAX_STRING_LENGTH}`);
+                    text += part;
+                }
+                state.charge(text.length >> 3);
                 return text;
             };
         case 'starts-with':
@@ -200,13 +379,27 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                 if (textArg === undefined || startArg === undefined || args.length > 3)
                     throw expects(name, '(string, number, number?)');
                 const text = toStringValue(textArg(focus, state), state);
+                if (state.strict) {
+                    const from = toNumberValue(startArg(focus, state), state);
+                    const count = lengthArg === undefined ? undefined : toNumberValue(lengthArg(focus, state), state);
+                    state.charge(text.length >> 3);
+                    return strictSubstring(text, from, count);
+                }
                 // Q-FN-SUBSTRING: JavaScript's substring() on rounded bounds (it swaps reversed bounds and reads NaN as 0).
                 const start = Math.round(toNumberValue(startArg(focus, state), state)) - 1;
                 if (lengthArg === undefined) return text.substring(start);
                 return text.substring(start, start + Math.round(toNumberValue(lengthArg(focus, state), state)));
             };
         case 'string-length':
-            return (focus, state) => optionalString(name, args, focus, state).length;
+            return (focus, state) => {
+                const text = optionalString(name, args, focus, state);
+                if (!state.strict) return text.length;
+                // Strict: characters, not UTF-16 units: a character outside the Basic Multilingual Plane counts once.
+                state.charge(text.length >> 3);
+                let characters = 0;
+                for (const _ of text) characters++;
+                return characters;
+            };
         case 'normalize-space':
             return (focus, state) => {
                 const text = optionalString(name, args, focus, state);
@@ -258,24 +451,15 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
             return (focus, state) => {
                 const arg = args[0];
                 if (arg === undefined || args.length !== 1) throw expects(name, '(string)');
-                // Q-FN-LANG: the first ancestor-or-self whose getAttributeNS() answers anything but null decides, so
-                // on a DOM that answers '' for a missing attribute only the context node is ever looked at.
-                let language: string | null = null;
-                for (
-                    let node: DomNode | null | undefined = focus.node;
-                    node != null && node.nodeType !== DOCUMENT_NODE;
-                    node = node.parentNode
-                ) {
-                    if (node.getAttributeNS === undefined)
-                        throw new XPathTypeError('Function lang needs an element context');
-                    const value = node.getAttributeNS(XML_NAMESPACE_URI, 'lang');
-                    if (value != null) {
-                        language = String(value);
-                        break;
-                    }
-                }
+                const language = state.strict ? strictLanguageOf(focus.node, state) : languageOf(focus.node, state);
                 if (language === null) return false;
                 const wanted = toStringValue(arg(focus, state), state);
+                if (state.strict) {
+                    // Section 4.3: equal, or equal up to a `-` suffix, ignoring case.
+                    const have = language.toLowerCase();
+                    const want = wanted.toLowerCase();
+                    return have === want || have.startsWith(`${want}-`);
+                }
                 return (
                     language.startsWith(wanted) &&
                     (language.length === wanted.length || language.charAt(wanted.length) === '-')
@@ -284,7 +468,7 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
         case 'number':
             return (focus, state) => {
                 const arg = args[0];
-                if (arg === undefined) return stringToNumber(stringValueOf(focus.node, state));
+                if (arg === undefined) return stringToNumber(stringValueOf(focus.node, state), state.strict);
                 if (args.length !== 1) throw expects(name, '(object?)');
                 return toNumberValue(arg(focus, state), state);
             };
@@ -293,7 +477,7 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                 const set = oneNodeSet(name, args, focus, state);
                 state.charge(set.size);
                 let total = 0;
-                for (const node of set.unordered) total += stringToNumber(stringValueOf(node, state));
+                for (const node of set.unordered) total += stringToNumber(stringValueOf(node, state), state.strict);
                 return total;
             };
         case 'floor':

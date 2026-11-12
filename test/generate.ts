@@ -1,4 +1,4 @@
-// Random documents (the generator of forks/review/fuzz2.js) and random expressions (from the XPath 1.0 grammar).
+// Random documents (nested, flat, deep, wide, with namespaces, xml:lang, numeric text, a DOCTYPE) and random expressions (from the XPath 1.0 grammar, with variables, custom functions and prefixes).
 
 export type Random = () => number;
 
@@ -7,6 +7,8 @@ function pick<T>(random: Random, items: readonly T[], fallback: T): T {
 }
 
 const NAMES = ['a', 'b', 'c', 'p:d', 'q:e'];
+/** Attribute values and text that exercise number(), sum(), lang() and whitespace handling. */
+const NUMERIC_TEXT = ['12', ' 3.5 ', '\n  ', '-7', '1e3', '.5', '0x10', '1.', '+4', ' ', '0', '-0', 'NaN', '٣'];
 
 function attributes(random: Random): string {
     let text = '';
@@ -16,6 +18,12 @@ function attributes(random: Random): string {
     if (random() < 0.12) text += ` xmlns:n${Math.floor(random() * 3)}="urn:n"`;
     if (random() < 0.08) text += ` xmlns="urn:def${Math.floor(random() * 2)}"`;
     if (random() < 0.1) text += ' p:z="3"';
+    // More attribute names, xml:lang (lang() climbs to it), numeric and whitespace values, an undeclared default namespace.
+    if (random() < 0.12) text += ` z="${pick(random, NUMERIC_TEXT, '1')}"`;
+    if (random() < 0.08) text += ` k="${pick(random, NUMERIC_TEXT, '1')}"`;
+    if (random() < 0.06) text += ' ID="I1"';
+    if (random() < 0.1) text += ` xml:lang="${pick(random, ['en', 'en-US', 'EN', 'de-AT', ''], 'en')}"`;
+    if (random() < 0.05) text += ' xmlns=""';
     return text;
 }
 
@@ -28,7 +36,8 @@ function content(random: Random, depth: number, maxDepth: number, width: number)
             const name = pick(random, NAMES, 'a');
             out += `<${name}${attributes(random)}>${content(random, depth + 1, maxDepth, width)}</${name}>`;
         } else if (r < 0.65) out += `<${pick(random, NAMES, 'a')}${attributes(random)}/>`;
-        else if (r < 0.75) out += `text${i}`;
+        else if (r < 0.72) out += `text${i}`;
+        else if (r < 0.75) out += pick(random, NUMERIC_TEXT, '1');
         else if (r < 0.82) out += '<![CDATA[cd]]>';
         else if (r < 0.91) out += '<!--c-->';
         else out += '<?pi d?>';
@@ -36,15 +45,30 @@ function content(random: Random, depth: number, maxDepth: number, width: number)
     return out;
 }
 
-export function documentText(random: Random): string {
+export interface DocumentOptions {
+    /**
+     * The share of documents that have one parent with more children than the fast paths' thresholds (default none). The
+     * oracle is quadratic on such a document, so the document fuzzer, which runs every query of the corpus on each, leaves
+     * them out; the expression fuzzer takes a few, and the unit tests build them directly.
+     */
+    readonly wide?: number;
+}
+
+export function documentText(random: Random, options: DocumentOptions = {}): string {
     const mode = random();
     let body: string;
-    if (mode < 0.1) {
+    if (mode < (options.wide ?? 0)) {
+        // A parent with more children than the fast paths' thresholds (3,000 siblings ranked at once, a sweep against a
+        // sort when n * 8 exceeds the node count): the shapes small documents never reach.
+        const width = 3050 + Math.floor(random() * 700);
+        body = Array.from({ length: width }, () => `<${random() < 0.7 ? 'a' : 'b'}${attributes(random)}/>`).join('');
+    } else if (mode < 0.1 + (options.wide ?? 0)) {
         const depth = 20 + Math.floor(random() * 60);
         body = '<a x="1">'.repeat(depth) + content(random, 0, 2, 5) + '</a>'.repeat(depth);
     } else if (mode < 0.2) body = content(random, 0, 1, 40);
     else body = content(random, 0, 5, 7);
-    const before = random() < 0.3 ? '<?top pi?><!--top-->' : '';
+    const doctype = random() < 0.06 ? '<!DOCTYPE r [<!ENTITY e "ent"><!ATTLIST a id ID #IMPLIED>]>' : '';
+    const before = `${doctype}${random() < 0.3 ? '<?top pi?><!--top-->' : ''}`;
     const after = random() < 0.3 ? '<!--end--><?end pi?>' : '';
     return `${before}<r xmlns:p="urn:p" xmlns:q="urn:q"${attributes(random)}>${body}</r>${after}`;
 }
@@ -80,7 +104,10 @@ const TESTS = [
     'processing-instruction()',
     "processing-instruction('pi')",
     'd',
-    'A'
+    'A',
+    'p:d',
+    'p:*',
+    'u:z'
 ];
 const ATTRIBUTE_TESTS = ['*', 'x', 'y', 'id', 'X'];
 const STRINGS = ["'a'", "'1'", "''", "'text1'", '"i1"', "'x y'", "'urn:p'"];
@@ -133,7 +160,7 @@ export function makeExpressionGenerator(random: Random, options: ExpressionOptio
 
     function string(depth: number): string {
         const r = random();
-        if (depth >= 3 || r < 0.3) return one(STRINGS, "''");
+        if (depth >= 3 || r < 0.3) return random() < 0.12 ? '$v' : one(STRINGS, "''");
         if (r < 0.42) return `local-name(${random() < 0.5 ? '' : nodeSet(depth + 1)})`;
         if (r < 0.52) return `name(${random() < 0.5 ? '' : nodeSet(depth + 1)})`;
         if (r < 0.58) return `namespace-uri(${random() < 0.5 ? '' : nodeSet(depth + 1)})`;
@@ -149,7 +176,8 @@ export function makeExpressionGenerator(random: Random, options: ExpressionOptio
 
     function number(depth: number): string {
         const r = random();
-        if (depth >= 3 || r < 0.3) return one(NUMBERS, '1');
+        if (depth >= 3 || r < 0.3)
+            return random() < 0.12 ? one(['$n', 'f()', 'g(1)', 'g(position())'], '$n') : one(NUMBERS, '1');
         if (r < 0.4) return 'position()';
         if (r < 0.48) return 'last()';
         if (r < 0.6) return `count(${nodeSet(depth + 1)})`;
@@ -163,7 +191,7 @@ export function makeExpressionGenerator(random: Random, options: ExpressionOptio
 
     function boolean(depth: number): string {
         const r = random();
-        if (depth >= 3 || r < 0.1) return one(['true()', 'false()'], 'true()');
+        if (depth >= 3 || r < 0.1) return one(['true()', 'false()', '$b'], 'true()');
         if (r < 0.4) return `${any(depth + 1)} ${one(['=', '=', '!=', '<', '<=', '>', '>='], '=')} ${any(depth + 1)}`;
         if (r < 0.5) return `${boolean(depth + 1)} ${one(['and', 'or'], 'and')} ${boolean(depth + 1)}`;
         if (r < 0.6) return `not(${any(depth + 1)})`;

@@ -97,7 +97,7 @@ function isDigit(code: number): boolean {
     return code >= 48 && code <= 57;
 }
 
-export function tokenize(source: string): Token[] {
+export function tokenize(source: string, strict: boolean = false): Token[] {
     const tokens: Token[] = [];
     const n = source.length;
     let pos = 0;
@@ -120,7 +120,11 @@ export function tokenize(source: string): Token[] {
             continue;
         }
         // Q-LEX-2: a NUL outside a string literal ends the expression in upstream (it uses NUL as its end marker).
-        if (code === 0) break;
+        if (code === 0) {
+            // Strict: a NUL is not an XPath character; it is not the end of the expression.
+            if (strict) throw new XPathSyntaxError('XPath expression contains a NUL character');
+            break;
+        }
         switch (ch) {
             case '(':
             case ')':

@@ -225,3 +225,55 @@ export function sortInDocumentOrder(nodes: readonly DomNode[]): DomNode[] {
     if (sorted === null) throw new XPathOrderError();
     return sorted;
 }
+
+/** How many nodes `sortFew` takes: more than that and numbering the tree (one walk, then keys) is the better price. */
+export const FEW_NODES = 32;
+
+/**
+ * Document order for a handful of tree nodes without numbering the whole tree: each node's chain of ancestors is
+ * compared, and two branches under their common ancestor are ordered by walking forward from one of them. The cost
+ * is the depth and the width of the branching parents, not the size of the document, which is what an evaluation
+ * that keeps being interrupted by caller code (so keeps losing its numbering) needs. `charge` is told what was
+ * walked. Null when a node is not a plain tree node (an attribute or a namespace node) or the nodes are not in one
+ * tree; the caller then numbers the tree (which also reports a set that has no order).
+ */
+export function sortFew(nodes: readonly DomNode[], charge: (units: number) => void): DomNode[] | null {
+    const chains: DomNode[][] = [];
+    for (const node of nodes) {
+        if (node.nodeType === ATTRIBUTE_NODE || isNamespaceNode(node)) return null;
+        const chain: DomNode[] = [];
+        for (let up: DomNode | null | undefined = node; up != null; up = up.parentNode) chain.push(up);
+        chain.reverse();
+        charge(chain.length);
+        const root = chains[0]?.[0];
+        if (root !== undefined && chain[0] !== root) return null;
+        chains.push(chain);
+    }
+    const chainOf = new Map<DomNode, DomNode[]>();
+    nodes.forEach((node, i) => {
+        const chain = chains[i];
+        if (chain !== undefined) chainOf.set(node, chain);
+    });
+    const before = (a: DomNode, b: DomNode): number => {
+        const left = chainOf.get(a);
+        const right = chainOf.get(b);
+        if (left === undefined || right === undefined) return 0;
+        const shared = Math.min(left.length, right.length);
+        let at = 0;
+        while (at < shared && left[at] === right[at]) at++;
+        if (at === shared) return left.length - right.length;
+        const branch = right[at];
+        let steps = 0;
+        let found = false;
+        for (let sibling: DomNode | null | undefined = left[at]; sibling != null; sibling = sibling.nextSibling) {
+            steps++;
+            if (sibling === branch) {
+                found = true;
+                break;
+            }
+        }
+        charge(steps);
+        return found ? -1 : 1;
+    };
+    return nodes.slice().sort(before);
+}

@@ -247,7 +247,11 @@ export function compileCall(name: string, args: readonly Compiled[]): Compiled {
             const custom = lookup === null ? null : lookup(localName, namespace);
             if (custom != null) {
                 const values = args.map((arg) => arg(focus, state));
-                return custom(focus, state, values);
+                try {
+                    return custom(focus, state, values);
+                } finally {
+                    state.userCodeRan();
+                }
             }
             if (prefix !== null) throw new XPathResolveError(`Unknown function ${name}`);
         }
@@ -298,10 +302,109 @@ function siblingCountStep(expr: Expr): Step | null {
         return null;
     const step = arg.steps[0];
     if (step === undefined || step.predicates.length !== 0) return null;
+    // A name test with a prefix asks the resolver, and can fail, when it is first applied to a node: the rank pass would
+    // apply it to siblings that upstream never tests (a context with no following sibling tests none), so it keeps the
+    // generic path, which tests the same nodes upstream does.
+    if (step.test.kind === 'prefixAny' || (step.test.kind === 'name' && step.test.prefix !== null)) return null;
     return step.axis === 'preceding-sibling' || step.axis === 'following-sibling' ? step : null;
 }
 
+/** Core functions that, called with no argument, read the context node. */
+const CONTEXT_DEFAULTING = new Set([
+    'string',
+    'number',
+    'normalize-space',
+    'string-length',
+    'name',
+    'local-name',
+    'namespace-uri'
+]);
+
+/**
+ * Does the value of the expression depend on nothing but the document (the root of the context node's tree)? No
+ * context node of its own, no position, no size, no variable, no function this engine does not know (caller code may
+ * be impure). `//b`, `count(//b) > 0`, `(//a)[1]/b` are; `b`, `position()`, `string()`, `$x` are not. Inner contexts do not
+ * count: a predicate inside a step sees the step's own nodes.
+ */
+export function dependsOnDocumentOnly(expr: Expr): boolean {
+    switch (expr.kind) {
+        case 'literal':
+        case 'number':
+            return true;
+        case 'variable':
+            return false;
+        case 'or':
+        case 'and':
+        case 'union':
+            return expr.operands.every(dependsOnDocumentOnly);
+        case 'chain':
+            return dependsOnDocumentOnly(expr.first) && expr.rest.every((link) => dependsOnDocumentOnly(link.operand));
+        case 'negate':
+            return dependsOnDocumentOnly(expr.operand);
+        case 'path':
+            return expr.filter === null ? expr.absolute : dependsOnDocumentOnly(expr.filter);
+        case 'call':
+            return (
+                isCoreCall(expr.name) &&
+                expr.name !== 'position' &&
+                expr.name !== 'last' &&
+                expr.name !== 'lang' &&
+                !(CONTEXT_DEFAULTING.has(expr.name) && expr.args.length === 0) &&
+                expr.args.every(dependsOnDocumentOnly)
+            );
+    }
+}
+
+/** Does evaluating the expression walk anything (a location step)? Only those are worth remembering. */
+function walksTheDocument(expr: Expr): boolean {
+    switch (expr.kind) {
+        case 'literal':
+        case 'number':
+        case 'variable':
+            return false;
+        case 'or':
+        case 'and':
+        case 'union':
+            return expr.operands.some(walksTheDocument);
+        case 'chain':
+            return walksTheDocument(expr.first) || expr.rest.some((link) => walksTheDocument(link.operand));
+        case 'negate':
+            return walksTheDocument(expr.operand);
+        case 'path':
+            return expr.steps.length > 0 || (expr.filter !== null && walksTheDocument(expr.filter));
+        case 'call':
+            return expr.args.some(walksTheDocument);
+    }
+}
+
+/**
+ * Evaluates `run` once per document and remembers the answer, for an expression that depends on nothing else. This is
+ * what keeps `//a[//b[//c]]` from evaluating `//b[//c]` once per `a`: the answer is the same for every context node of
+ * the document. Only while no caller code can run (`state.pure`): a custom function or a variable resolver may change
+ * the document, and the answers are dropped when one does (EvalState.userCodeRan). Values are shared, never changed.
+ */
+function remembered(run: Compiled): Compiled {
+    const site = {};
+    return (focus, state) => {
+        if (!state.pure || focus.node === NO_NODE) return run(focus, state);
+        const root = documentRoot(focus.node);
+        const answers = state.answersOf(site);
+        const known = answers.get(root);
+        if (known !== undefined) return known;
+        const value = run(focus, state);
+        answers.set(root, value);
+        return value;
+    };
+}
+
 export function compile(expr: Expr): Compiled {
+    const run = compileExpression(expr);
+    return expr.kind !== 'literal' && expr.kind !== 'number' && walksTheDocument(expr) && dependsOnDocumentOnly(expr)
+        ? remembered(run)
+        : run;
+}
+
+function compileExpression(expr: Expr): Compiled {
     switch (expr.kind) {
         case 'literal': {
             const { value } = expr;
@@ -377,6 +480,7 @@ export function compile(expr: Expr): Compiled {
             return (focus, state) => {
                 const namespace = prefix === null ? '' : state.resolvePrefix(prefix, focus.node);
                 const value = state.settings.variables?.(localName, namespace);
+                if (!state.pure) state.userCodeRan();
                 if (value == null) throw new XPathResolveError(`Undeclared variable: $${name}`);
                 return value;
             };
@@ -389,6 +493,8 @@ export interface ExpressionFacts {
     readonly usesPrefixes: boolean;
     readonly usesVariables: boolean;
     readonly usesFunctions: boolean;
+    /** Every prefix the expression uses (name tests, function names, variable names), for strict mode's early check. */
+    readonly prefixes: ReadonlySet<string>;
 }
 
 /** What caller-supplied code an expression can reach; decides whether an evaluation is `pure`. */
@@ -396,6 +502,7 @@ export function expressionFacts(root: Expr): ExpressionFacts {
     let usesPrefixes = false;
     let usesVariables = false;
     let usesFunctions = false;
+    const prefixes = new Set<string>();
     // Explicit work list: the AST can be wide, and this must not recurse.
     const pending: Expr[] = [root];
     for (let expr = pending.pop(); expr !== undefined; expr = pending.pop()) {
@@ -416,24 +523,35 @@ export function expressionFacts(root: Expr): ExpressionFacts {
                 if (expr.filter !== null) pending.push(expr.filter);
                 for (const predicate of expr.filterPredicates) pending.push(predicate);
                 for (const step of expr.steps) {
-                    if (step.test.kind === 'prefixAny' || (step.test.kind === 'name' && step.test.prefix !== null))
+                    if (step.test.kind === 'prefixAny') {
                         usesPrefixes = true;
+                        prefixes.add(step.test.prefix);
+                    } else if (step.test.kind === 'name' && step.test.prefix !== null) {
+                        usesPrefixes = true;
+                        prefixes.add(step.test.prefix);
+                    }
                     for (const predicate of step.predicates) pending.push(predicate);
                 }
                 break;
             case 'call':
                 usesFunctions = true;
-                if (expr.name.includes(':')) usesPrefixes = true;
+                if (expr.name.includes(':')) {
+                    usesPrefixes = true;
+                    prefixes.add(expr.name.slice(0, expr.name.indexOf(':')));
+                }
                 for (const arg of expr.args) pending.push(arg);
                 break;
             case 'variable':
                 usesVariables = true;
-                if (expr.name.includes(':')) usesPrefixes = true;
+                if (expr.name.includes(':')) {
+                    usesPrefixes = true;
+                    prefixes.add(expr.name.slice(0, expr.name.indexOf(':')));
+                }
                 break;
             case 'literal':
             case 'number':
                 break;
         }
     }
-    return { usesPrefixes, usesVariables, usesFunctions };
+    return { usesPrefixes, usesVariables, usesFunctions, prefixes };
 }

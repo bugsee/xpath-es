@@ -1,7 +1,19 @@
 // Typed error hierarchy. Messages of the compat-visible errors repeat upstream's wording, because callers
 // (and the differential fuzzer) compare `error.message`.
 
-export type XPathErrorCode = 'SYNTAX' | 'TYPE' | 'RESOLVE' | 'ORDER' | 'LIMIT' | 'BUDGET' | 'CONTEXT';
+export type XPathErrorCode = 'SYNTAX' | 'TYPE' | 'RESOLVE' | 'ORDER' | 'LIMIT' | 'BUDGET' | 'TIMEOUT' | 'CONTEXT';
+
+/**
+ * The package is built twice, as ES modules and as CommonJS, so a program that loads both has two copies of these
+ * classes and `instanceof` is false across them. Every error carries a brand under a registered symbol, which both copies
+ * share, and `isXPathError` tests for it; `code` is the same string in both.
+ */
+const BRAND: symbol = Symbol.for('xpath-es.XPathError');
+
+/** Is the value an error of this package, from either build (ES module or CommonJS)? */
+export function isXPathError(value: unknown): value is XPathError {
+    return value instanceof Error && Reflect.get(value, BRAND) === true;
+}
 
 export class XPathError extends Error {
     readonly code: XPathErrorCode;
@@ -10,6 +22,7 @@ export class XPathError extends Error {
         super(message);
         this.name = new.target.name;
         this.code = code;
+        Reflect.defineProperty(this, BRAND, { value: true });
     }
 }
 
@@ -41,7 +54,7 @@ export class XPathOrderError extends XPathError {
     }
 }
 
-/** A static limit was exceeded (expression length, nesting depth). */
+/** A fixed limit was exceeded: the expression's length or nesting depth, or the size of something an evaluation would build. */
 export class XPathLimitError extends XPathError {
     constructor(message: string) {
         super('LIMIT', message);
@@ -58,7 +71,7 @@ export class XPathBudgetError extends XPathError {
 /** The per-evaluation wall-clock limit ran out. */
 export class XPathTimeoutError extends XPathError {
     constructor(limitMs: number) {
-        super('BUDGET', `XPath evaluation exceeded its time limit of ${limitMs} ms`);
+        super('TIMEOUT', `XPath evaluation exceeded its time limit of ${limitMs} ms`);
     }
 }
 

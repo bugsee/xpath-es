@@ -70,7 +70,8 @@ export const loadCandidateModule = (): unknown => loadModule(candidateSpec());
 
 /** The part of an engine's legacy API the harness drives, over any module with that API. */
 export interface XPathLike {
-    select(expression: string, node: unknown, single?: boolean): unknown;
+    /** `options` ({budget, timeoutMs}) are the engine's extension; upstream ignores them. */
+    select(expression: string, node: unknown, single?: boolean, options?: Readonly<Record<string, unknown>>): unknown;
     parseSelect(expression: string, options: Record<string, unknown>): unknown;
     evaluateNodeSet(expression: string, options: Record<string, unknown>): { toArray(): unknown };
     evaluateString(expression: string, options: Record<string, unknown>): unknown;
@@ -80,6 +81,8 @@ export interface XPathLike {
     orderPair(a: unknown, b: unknown): unknown;
     /** An XPathResult iterator (type 5) read to the end. */
     iterate(expression: string, node: unknown): unknown[];
+    /** `useNamespaces(map)(expression, node)`: a selection with a namespace resolver. */
+    selectWithNamespaces(expression: string, node: unknown, namespaces: Readonly<Record<string, string>>): unknown;
 }
 
 export function loadXPath(lib: unknown): XPathLike {
@@ -89,7 +92,7 @@ export function loadXPath(lib: unknown): XPathLike {
         return { toArray: () => call(set, 'toArray') };
     };
     return {
-        select: (expression, node, single) => call(lib, 'select', expression, node, single),
+        select: (expression, node, single, options) => call(lib, 'select', expression, node, single, options),
         parseSelect: (expression, options) => call(call(lib, 'parse', expression), 'select', options),
         evaluateNodeSet: (expression, options) => {
             const set = call(call(lib, 'parse', expression), 'evaluateNodeSet', options);
@@ -98,6 +101,11 @@ export function loadXPath(lib: unknown): XPathLike {
         evaluateString: (expression, options) => call(call(lib, 'parse', expression), 'evaluateString', options),
         newSet,
         orderPair: (a, b) => newSet([a, b]).toArray(),
+        selectWithNamespaces: (expression, node, namespaces) => {
+            const selector = call(lib, 'useNamespaces', namespaces);
+            if (!isCallable(selector)) throw new TypeError('useNamespaces did not return a function');
+            return selector(expression, node);
+        },
         iterate: (expression, node) => {
             const result = call(lib, 'evaluate', expression, node, null, 5, null);
             const out: unknown[] = [];
@@ -188,14 +196,15 @@ export function describe(value: unknown, index: ReadonlyMap<unknown, number>): s
         const at = index.get(value);
         return at === undefined ? `UNKNOWN:${String(value['nodeName'])}` : String(at);
     }
-    return `${typeof value}:${String(value)}`;
+    // -0 and 0 print alike with String(); they are different numbers (1 div -0), so they must not compare equal.
+    return `${typeof value}:${Object.is(value, -0) ? '-0' : String(value)}`;
 }
 
 export function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-/** Deterministic generator shared by the fuzzers (same recurrence as forks/review/fuzz2.js). */
+/** Deterministic generator shared by the fuzzers (a linear congruential generator, so a seed reproduces a run). */
 export function makeRandom(seed: number): () => number {
     let state = seed;
     return () => (state = (state * 1664525 + 1013904223) % 4294967296) / 4294967296;
