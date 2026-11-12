@@ -154,9 +154,11 @@ test('package.json: exports, engines, files and sideEffects', () => {
 test('npm pack ships the build, the licence and the readme, and nothing else', () => {
     const pack = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: root, encoding: 'utf8' });
     assert.equal(pack.status, 0, pack.stderr);
-    // `npm pack --json` prints an array of packages (npm 10, 11) or one package object (npm 12).
+    // `npm pack --json` prints an array of packages (npm 10, 11), one package object, or an object keyed by the package
+    // name (npm 12.2).
     const report = JSON.parse(pack.stdout);
-    const { files: packed } = Array.isArray(report) ? report[0] : report;
+    const entry = Array.isArray(report) ? report[0] : Array.isArray(report.files) ? report : Object.values(report)[0];
+    const { files: packed } = entry;
     const names = packed.map((file) => file.path);
     for (const required of [
         'package.json',
