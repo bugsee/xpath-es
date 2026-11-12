@@ -1,4 +1,5 @@
 {
+    "ignorePatterns": ["**/*.mjs", "test/dist/types/**", "dist/**", "dist-tests/**", ".build-cjs/**"],
     "plugins": ["typescript", "import"],
     "categories": { "correctness": "error" },
     "rules": {

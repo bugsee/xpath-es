@@ -10,6 +10,7 @@ import {
 } from './dom.ts';
 import type { DomNode } from './dom.ts';
 import { XPathBudgetError, XPathOrderError, XPathResolveError, XPathTimeoutError } from './errors.ts';
+import { now } from './clock.ts';
 import { Numbering } from './order.ts';
 
 /**
@@ -102,6 +103,8 @@ export class EvalState {
     #work = 0;
     readonly #budget: number;
     readonly #timeoutMs: number;
+    readonly #timed: boolean;
+    /** In the units of `now()` (one clock for the whole run, see clock.ts): only compared with later readings of it. */
     readonly #deadline: number;
     #nextClockCheck = CLOCK_CHECK_INTERVAL;
     readonly #prefixes = new Map<string, string>();
@@ -115,7 +118,8 @@ export class EvalState {
         this.allowAnyNamespaceForNoPrefix = settings.allowAnyNamespaceForNoPrefix;
         this.#budget = settings.budget;
         this.#timeoutMs = settings.timeoutMs;
-        this.#deadline = settings.timeoutMs === 0 ? Number.POSITIVE_INFINITY : performance.now() + settings.timeoutMs;
+        this.#timed = settings.timeoutMs !== 0;
+        this.#deadline = this.#timed ? now() + settings.timeoutMs : Number.POSITIVE_INFINITY;
     }
 
     /** Total node visits charged so far. */
@@ -132,7 +136,7 @@ export class EvalState {
         if (this.#budget !== 0 && this.#work > this.#budget) throw new XPathBudgetError(this.#budget);
         if (this.#work >= this.#nextClockCheck) {
             this.#nextClockCheck = this.#work + CLOCK_CHECK_INTERVAL;
-            if (performance.now() > this.#deadline) throw new XPathTimeoutError(this.#timeoutMs);
+            if (this.#timed && now() > this.#deadline) throw new XPathTimeoutError(this.#timeoutMs);
         }
     }
 

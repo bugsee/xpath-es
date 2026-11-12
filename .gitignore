@@ -12,4 +12,6 @@ DECISIONS.md
 docs/design/
 docs/decisions/
 .design/
-dist/
+/dist/
+/.build-cjs/
+/dist-tests/

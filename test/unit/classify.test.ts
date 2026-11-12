@@ -1,6 +1,7 @@
 // The class-5 classifier (namespace axis over duplicate contexts) must explain that difference and nothing else.
 
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { test } from 'node:test';
 import { allNodes, call, describe, errorText, loadDom, loadModule, loadOracle, loadXPath } from '../harness.ts';
 import type { DomName, XPathLike } from '../harness.ts';
@@ -29,7 +30,14 @@ function evaluate(engine: XPathLike, dom: DomName, expression: string): string {
     }
 }
 
-const engine = loadXPath(loadModule('./src/index.ts'));
+// The fixture next to this test's directory, in whichever form the tests run (TypeScript, or compiled to JavaScript).
+const REVERSING_CANDIDATE = path.join(
+    import.meta.dirname,
+    '..',
+    'fixtures',
+    `reordering-candidate${path.extname(import.meta.filename)}`
+);
+const engine = loadXPath(loadModule(process.env['XPATH_ES_UNIT_ENGINE'] ?? './src/index.ts'));
 
 void test('the interned oracle equals the oracle except where upstream repeats a namespace node', () => {
     const interned = loadInternedOracle();
@@ -106,7 +114,7 @@ void test('only the documented upstream crash excuses a difference', () => {
 
 void test('unrelated differences are not classified, even on an expression with a namespace axis', () => {
     const interned = loadInternedOracle();
-    const reversing = loadXPath(loadModule('./test/fixtures/reordering-candidate.ts'));
+    const reversing = loadXPath(loadModule(REVERSING_CANDIDATE));
     for (const expression of ['//*/namespace::*', '//*', DUPLICATING]) {
         const expected = evaluate(loadOracle(), 'xmldom08', expression);
         const actual = evaluate(reversing, 'xmldom08', expression);

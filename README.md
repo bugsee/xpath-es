@@ -24,11 +24,17 @@ This repository holds four things:
 
 ### What gates, and where the engine deliberately differs from upstream
 
+**Supported DOMs:** `@xmldom/xmldom` >= 0.8.15 is gated (0.8.15 is its LTS and what the SAML libraries use; the 0.9
+line is gated with the split below, tested with the latest 0.9.x); jsdom, happy-dom, linkedom and the browsers
+(Chromium, Firefox, WebKit) are compared or smoke-tested. Older xmldom (the unscoped `xmldom` package, 0.6 and
+earlier) is not supported or tested: it is unmaintained and has known vulnerabilities. The engine does not check which
+DOM it is given; it takes any DOM-shaped nodes.
+
 | DOM | Status | Gate |
 |---|---|---|
-| `@xmldom/xmldom` 0.8 (what the SAML libraries use) | **gated** | zero differences from upstream, in every scenario and for random expressions, except class 5 below (`CLASSIFY=ns-duplicate`) |
+| `@xmldom/xmldom` 0.8.15 (what the SAML libraries use) | **gated** | zero differences from upstream, in every scenario and for random expressions, except class 5 below (`CLASSIFY=ns-duplicate`) |
 | `@xmldom/xmldom` 0.9 | **gated, split** | `CLASSIFY=all`: no difference where upstream answers and the engine answers, except class 5; every other difference must fall in a documented class, and an unclassified difference fails |
-| xmldom 0.6, jsdom, happy-dom, linkedom | compared, **not gating** | the nightly run reports the differences; it fails only on a crash |
+| jsdom, happy-dom, linkedom | compared, **not gating** | the nightly run reports the differences; it fails only on a crash |
 
 The documented classes (xmldom 0.9):
 
@@ -48,9 +54,8 @@ The documented classes (xmldom 0.9):
   uses the namespace axis.
 
 Why the other DOMs do not gate: upstream delegates ordering to the DOM there and inherits its defects (linkedom's
-`compareDocumentPosition` is not a document order, happy-dom and jsdom misorder or drop attributes), and xmldom 0.6
-leaves `parentNode` set on a removed node. The engine returns true document order, and throws `XPathOrderError` for
-node-sets of several trees and for a context in a removed xmldom 0.6 subtree.
+`compareDocumentPosition` is not a document order, happy-dom and jsdom misorder or drop attributes). The engine
+returns true document order, and throws `XPathOrderError` for node-sets of several trees.
 
 Other deliberate differences:
 
@@ -60,14 +65,14 @@ Other deliberate differences:
 
 ## Running it
 
-Node >= 22.18 (the TypeScript sources run directly, by type stripping; `npm run build` makes `dist/esm` and
-`dist/cjs`).
+Node >= 22.18 (the TypeScript sources run directly, by type stripping; `npm run build` makes the plain JavaScript in
+`dist/`, see [Build and compatibility](#build-and-compatibility)).
 
 ```sh
 npm ci
 npm run check            # tsc (TypeScript 7, every strict flag), oxlint (type-aware), oxfmt --check
 npm run test:unit        # unit tests of the engine (node:test)
-npm run build            # dist/esm and dist/cjs, same compiler and strict options
+npm run build            # dist/: ES modules and CommonJS with declarations, same compiler and strict options
 npm run test:harness     # the harness tests itself on candidates whose verdict is known
 npm run test:differential
 npm run test:hostile
@@ -101,7 +106,7 @@ CANDIDATE=xpath node test/mutation.ts        # the oracle against itself: must s
 | `test/hostile-digests.ts` | records what the oracle answers on each hostile case (`baselines/oracle-digests.json`) |
 | `test/harness-selftest.ts` | a candidate that reverses node-sets must be caught by the fuzzer, a quadratic one by the gate |
 
-The DOM matrix for `<dom>`: `xmldom08` (`@xmldom/xmldom` 0.8.15, the default), `xmldom09`, `xmldom06`, `jsdom`,
+The DOM matrix for `<dom>`: `xmldom08` (`@xmldom/xmldom` 0.8.15, the default), `xmldom09` (`@xmldom/xmldom` 0.9.x), `jsdom`,
 `happy` (happy-dom) and `linkedom`, all dev dependencies with exact versions.
 
 ### The hostile gate and baselines
@@ -116,6 +121,44 @@ names). A listed case that is too slow does not fail the run and is reported; on
 so the baseline can shrink when that is stable. A wrong result or an error is never baselined. With no baseline file, or
 `HOSTILE_STRICT=1`, a candidate is judged strictly. `baselines/xpath-fork.json` records what the fork is known to
 be slow on.
+
+## Build and compatibility
+
+`npm run build` compiles `src/` to plain JavaScript with the same compiler and the same strict options as the type
+check (every strict flag, no `any`). The package is not published; this is what it would ship.
+
+```
+dist/index.js     index.d.ts     ES modules (and one .js / .d.ts per source module, flat in dist/)
+dist/index.cjs    index.d.cts    CommonJS (the same modules as .cjs / .d.cts)
+dist/*.js.map  dist/*.cjs.map    source maps with the sources inlined
+```
+
+- **ES2022, not down-levelled.** Classes, `#private` members, class fields and optional chaining are emitted as
+  written. The emitted files contain no TypeScript syntax and do not need Node's type stripping. The sources are
+  compiled against the ES2022 library only (no Node and no DOM typings), so they cannot use a newer API, and nothing
+  from Node's typings reaches the `.d.ts` files.
+- **Node >= 20** and recent browsers (`engines.node` is `>=20`). Developing in this repository, which runs the
+  TypeScript sources and tests directly, needs Node >= 22.18.
+- **`package.json`:** an `exports` map (`types` / `import` / `require`, so a TypeScript consumer gets `index.d.ts` or
+  `index.d.cts`), `main`, `module`, `types`, `files` (only `dist/`, the licence and this readme are packed) and
+  `"sideEffects": false`.
+- **Browser-safe.** The code imports nothing from Node (no `node:` modules, no packages); the ES module entry is the
+  browser entry. The time limit reads `globalThis.performance.now()` and falls back to `Date.now()` where there is
+  no `performance` object.
+- **Declarations** are emitted without declaration maps: the maps would point at sources that are not shipped.
+
+What checks it, on the built output rather than the sources (`npm run build`, then):
+
+| check | command |
+|---|---|
+| exports through `import` and `require`, the same names from both, the time limit without `performance`; the emitted files parse as ES2022 (acorn), keep their classes, `#private` members and `?.`, contain no TypeScript and no Node import; the declarations have no Node reference; `npm pack --dry-run` content | `npm run test:dist` |
+| a TypeScript consumer (ES2022 + DOM libraries, no Node typings) compiles against the declarations for both conditions | `npm run test:dist:types` |
+| unit tests, a reduced differential gate (xmldom 0.8 and 0.9, mutation, random expressions) and the strict hostile gate, with the candidate pointed at `dist/index.cjs`, on the tests compiled to JavaScript (`npm run build:tests`) | `npm run test:built` |
+| real browsers (Playwright: Chromium, Firefox, WebKit): expressions on `DOMParser` documents including namespaces, an HTML document and the budget and time-limit errors, and the same expressions through upstream `xpath` compared in the page | `npx playwright install chromium && npm run test:browser` |
+
+CI runs the first three on Node 20, 22 and 24 and the browser check on all three engines (WebKit is reported but does
+not block while the runners cannot install its system libraries from apt). WebKit is Playwright's build, not Safari
+itself, and no real mobile browser is tested.
 
 ## Licence, credits and references
 

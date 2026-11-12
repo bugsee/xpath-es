@@ -111,8 +111,8 @@ export function loadXPath(lib: unknown): XPathLike {
 export const loadOracle = (): XPathLike => loadXPath(loadOracleModule());
 export const loadCandidate = (): XPathLike => loadXPath(loadCandidateModule());
 
-export type DomName = 'xmldom08' | 'xmldom09' | 'xmldom06' | 'jsdom' | 'happy' | 'linkedom';
-export const DOM_NAMES: readonly DomName[] = ['xmldom08', 'xmldom09', 'xmldom06', 'jsdom', 'happy', 'linkedom'];
+export type DomName = 'xmldom08' | 'xmldom09' | 'jsdom' | 'happy' | 'linkedom';
+export const DOM_NAMES: readonly DomName[] = ['xmldom08', 'xmldom09', 'jsdom', 'happy', 'linkedom'];
 
 export function isDomName(value: string): value is DomName {
     return DOM_NAMES.some((name) => name === value);
@@ -139,13 +139,6 @@ export function loadDom(name: DomName): XmlParser {
             const lib: unknown = require('xmldom09');
             return (xml) =>
                 asDocument(call(construct(lib, 'DOMParser', { onError: silent }), 'parseFromString', xml, 'text/xml'));
-        }
-        case 'xmldom06': {
-            const lib: unknown = require('xmldom06');
-            return (xml) =>
-                asDocument(
-                    call(construct(lib, 'DOMParser', { errorHandler: silent }), 'parseFromString', xml, 'text/xml')
-                );
         }
         case 'jsdom': {
             const lib: unknown = require('jsdom');

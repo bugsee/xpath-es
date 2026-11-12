@@ -4,6 +4,7 @@
         "module": "commonjs",
         "moduleResolution": "bundler",
         "verbatimModuleSyntax": false,
-        "outDir": "dist/cjs"
+        // Emitted next to dist/ and renamed to .cjs / .d.cts by scripts/build.ts.
+        "outDir": ".build-cjs"
     }
 }

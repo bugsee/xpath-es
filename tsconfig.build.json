@@ -1,11 +1,18 @@
 {
     "extends": "./tsconfig.json",
     "compilerOptions": {
+        // Only the ES2022 language library: no Node and no DOM typings, so nothing from them can leak into dist/*.d.ts
+        // and the sources cannot use an API that is not in ES2022 (the oldest runtime is Node 20).
+        "lib": ["es2022"],
+        "types": [],
         "noEmit": false,
         "rootDir": "src",
-        "outDir": "dist/esm",
+        "outDir": "dist",
         "rewriteRelativeImportExtensions": true,
-        "sourceMap": true
+        "sourceMap": true,
+        "inlineSources": true,
+        "declaration": true,
+        "removeComments": false
     },
     "include": ["src/**/*.ts"]
 }

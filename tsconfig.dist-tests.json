@@ -1,0 +1,12 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": false,
+        "rootDir": ".",
+        "outDir": "dist-tests",
+        "rewriteRelativeImportExtensions": true,
+        "declaration": true,
+        "emitDeclarationOnly": false
+    },
+    "include": ["src/**/*.ts", "test/**/*.ts", "bench/**/*.ts"]
+}

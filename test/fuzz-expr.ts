@@ -10,6 +10,7 @@
 //   CLASSIFY=all|ns-duplicate  the split gate: differences in the documented classes (see test/fuzz.ts) are counted
 //   apart and do not fail the run; every other difference does
 
+import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { isReport } from './fuzz-expr-worker.ts';
 import type { Job, Kind } from './fuzz-expr-worker.ts';
@@ -35,7 +36,7 @@ let unparsable = 0;
 /** Runs one batch; resolves with the index of the expression that timed out, or -1 when the batch finished. */
 function runBatch(job: Job): Promise<number> {
     return new Promise((resolve, reject) => {
-        const worker = new Worker(new URL('./fuzz-expr-worker.ts', import.meta.url));
+        const worker = new Worker(new URL(`./fuzz-expr-worker${path.extname(import.meta.filename)}`, import.meta.url));
         let current = 0;
         let candidateDone = false;
         let timer = setTimeout(expire, limit);

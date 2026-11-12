@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loadDom } from '../harness.ts';
-import { stringToNumber } from '../../src/runtime.ts';
+import { stringToNumber } from '../support/engine.ts';
 import {
     DEFAULT_BUDGET,
     DEFAULT_TIMEOUT_MS,
@@ -15,7 +15,7 @@ import {
     XPathTimeoutError,
     parse as parseCompat,
     select
-} from '../../src/index.ts';
+} from '../support/engine.ts';
 
 const parse = loadDom('xmldom08');
 

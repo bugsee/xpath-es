@@ -26,8 +26,11 @@ const boundMs = Number(process.env['HOSTILE_BOUND_MS'] ?? 10_000);
 const killAfterMs = boundMs + 5_000;
 const only = process.env['HOSTILE_ONLY'] === undefined ? null : new RegExp(process.env['HOSTILE_ONLY']);
 const strict = process.env['HOSTILE_STRICT'] === '1';
-const root = path.resolve(import.meta.dirname, '..');
-const runner = path.join(root, 'bench/hostile-run.ts');
+// The scripts also run compiled to plain JavaScript (npm run build:tests, into dist-tests/): the runner is then the
+// compiled sibling, and the baselines, which are not compiled, are looked up in the working directory (the repository).
+const here = path.resolve(import.meta.dirname, '..');
+const root = existsSync(path.join(here, 'baselines')) ? here : process.cwd();
+const runner = path.join(here, `bench/hostile-run${path.extname(import.meta.filename)}`);
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return typeof value === 'object' && value !== null;
