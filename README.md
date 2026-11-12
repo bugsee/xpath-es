@@ -57,7 +57,7 @@ Why the other DOMs do not gate: upstream delegates ordering to the DOM there and
 `compareDocumentPosition` is not a document order, happy-dom and jsdom misorder or drop attributes). The engine
 returns true document order, and throws `XPathOrderError` for node-sets of several trees.
 
-Other deliberate differences from upstream, in the default mode:
+Other deliberate differences from upstream, in either mode:
 
 - Error *messages* differ where upstream throws an accidental `TypeError` or `ReferenceError`; the engine throws typed
   errors, and the fuzzers compare the *category* of two errors (syntax, unresolvable name, type, no document order,
@@ -77,20 +77,20 @@ Other deliberate differences from upstream, in the default mode:
 ## Modes: upstream and strict
 
 `new XPathProgram(source, { mode })`, `select(expression, node, false, { mode })`, `parse(expression, { mode })` and the
-`mode` option of the evaluator take `'upstream'` (the default) or `'strict'`.
+`mode` option of the evaluator take `'strict'` (the default) or `'upstream'`.
 
-- **`upstream`** is the adoption gate: the node-sets and the values existing consumers (samlify, xml-crypto,
+- **`upstream`** (opt in with `mode: 'upstream'`) is the adoption gate: the node-sets and the values existing consumers (samlify, xml-crypto,
   xml-encryption) have always seen from `xpath` 0.0.36, quirks included.
-- **`strict`** is XPath 1.0 as the Recommendation (16 November 1999) specifies it. Its answers are checked against the
+- **`strict`** (the default) is XPath 1.0 as the Recommendation (16 November 1999) specifies it. Its answers are checked against the
   text of the Recommendation (`test/unit/strict-spec.test.ts`), never against upstream, and `test/mode-agreement.ts`
   checks that on every random expression that uses none of the deviating features the two modes agree, so strict mode
   does not regress where upstream is right.
 
-### Known deviations from XPath 1.0 inherited from upstream (default mode)
+### Known deviations from XPath 1.0 inherited from upstream (`upstream` mode)
 
 Each one is pinned in both modes in `test/unit/modes.test.ts`.
 
-| | `upstream` mode (default) | `strict` mode |
+| | `upstream` mode | `strict` mode (default) |
 |---|---|---|
 | `following::` (2.2) | includes the context node's descendants and, when it has children, leaves out its following siblings; `/r/a[1]/following::e` finds nothing | not the descendants; the following siblings of the node and of each ancestor with their subtrees (for an attribute or namespace node, its element's children too) |
 | `preceding::` (2.2) | includes the ancestors and the document node | excludes ancestors; an attribute or namespace node stands where its element stands |
@@ -110,6 +110,11 @@ Each one is pinned in both modes in `test/unit/modes.test.ts`.
 **`id()` cannot detect duplicate IDs in either mode.** When two elements have the same ID, `id()` answers the first in
 the order the DOM looks up (document order for the DOMs tested); the Recommendation leaves duplicates undefined, and
 Blink, WebKit and Gecko answer the first as well. The ID attributes are `id` and, in strict mode, `xml:id`.
+
+Strict is the default, so code written against `xpath` that relied on a quirk above must ask for `mode: 'upstream'`.
+Known cost: strict `following::` and `preceding::` are evaluated per context node when a predicate is positional
+(`[1]`, `[last()]`) or, for `preceding::`, always, so they are quadratic over thousands of contexts (`//b/preceding::*`
+over 3,000 `b` elements takes about 9 million units, more than the default budget; upstream mode takes 15,000).
 
 ## Limits
 

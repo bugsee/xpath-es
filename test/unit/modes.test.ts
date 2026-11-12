@@ -1,6 +1,6 @@
-// Upstream mode (the default) and strict mode (XPath 1.0 as the Recommendation specifies it), pinned side by side.
+// Upstream mode and strict mode (the default; XPath 1.0 as the Recommendation specifies it), pinned side by side.
 // Every deviation the engine inherits from upstream xpath 0.0.36 is in the table below with what each mode answers; the
-// README lists them under "Known deviations from XPath 1.0 inherited from upstream (default mode)". The strict answers
+// README lists them under "Known deviations from XPath 1.0 inherited from upstream (upstream mode)". The strict answers
 // are derived from the text of the Recommendation (16 November 1999), never from upstream.
 
 import assert from 'node:assert/strict';
@@ -210,6 +210,10 @@ void test('a NUL character is the end of the expression in upstream mode and a s
     assert.equal(answer('strict', '1 + 2\u0000 garbage', DOC), 'SYNTAX');
 });
 
-void test('the default mode is upstream', () => {
-    assert.equal(show(select('count(/r/a[1]/following::*)', parseXml(DOC))), 'number:2');
+void test('the default mode is strict', () => {
+    const doc = parseXml(DOC);
+    const expression = 'count(/r/a[1]/following::*)';
+    assert.equal(show(select(expression, doc)), show(select(expression, doc, false, { mode: 'strict' })));
+    assert.notEqual(show(select(expression, doc)), show(select(expression, doc, false, { mode: 'upstream' })));
+    assert.equal(show(select(expression, doc, false, { mode: 'upstream' })), 'number:2');
 });

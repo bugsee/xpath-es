@@ -202,7 +202,7 @@ const CACHEABLE_LENGTH = 2048;
 const programs = new Map<string, XPathProgram>();
 let cachedLength = 0;
 
-function programFor(expression: unknown, mode: XPathMode = 'upstream'): XPathProgram {
+function programFor(expression: unknown, mode: XPathMode = 'strict'): XPathProgram {
     if (!expression) throw new XPathSyntaxError('XPath expression unspecified.');
     if (typeof expression !== 'string') throw new XPathSyntaxError('XPath expression must be a string.');
     if (expression.length > CACHEABLE_LENGTH) return new XPathProgram(expression, { mode });
@@ -651,18 +651,20 @@ export function evaluate(
     contextNode: DomNode | null | undefined,
     resolver: XPathNSResolver | null | undefined,
     type: number,
-    _result?: unknown
+    _result?: unknown,
+    options?: Pick<SelectOptions, 'mode'>
 ): XPathResult {
     if (type < 0 || type > 9) throw new XPathTypeError('Request type not supported');
     let program: XPathProgram;
     try {
-        program = programFor(expression);
+        program = programFor(expression, options?.mode);
     } catch (error) {
         throw new XPathException(XPathException.INVALID_EXPRESSION_ERR, error);
     }
     const node = contextNodeOf(contextNode);
     const namespaces: NamespaceLookup = resolver == null ? () => null : (prefix) => resolver.lookupNamespaceURI(prefix);
-    const { value } = program.runRaw({ node, namespaces, caseInsensitive: detectHtmlDom(node) });
+    const caseInsensitive = program.mode === 'strict' ? isHtmlDocument(node) : detectHtmlDom(node);
+    const { value } = program.runRaw({ node, namespaces, caseInsensitive });
     return new XPathResult(wrap(value), type);
 }
 

@@ -195,7 +195,7 @@ export class XPathProgram {
 
     constructor(source: string, options: ProgramOptions = {}) {
         this.source = source;
-        this.mode = options.mode ?? 'upstream';
+        this.mode = options.mode ?? 'strict';
         this.ast = parseXPath(source, options.limits ?? DEFAULT_PARSE_LIMITS, this.mode === 'strict');
         this.facts = expressionFacts(this.ast);
         this.#run = compile(this.ast);

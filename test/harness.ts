@@ -85,29 +85,40 @@ export interface XPathLike {
     selectWithNamespaces(expression: string, node: unknown, namespaces: Readonly<Record<string, string>>): unknown;
 }
 
+/**
+ * The mode the harness asks an xpath-es candidate for. The differential gates compare against upstream, so the
+ * default here is `upstream` even though the engine's own default is `strict`; CANDIDATE_MODE=strict asks for the
+ * engine's default. Upstream ignores the extra option.
+ */
+export function candidateMode(): 'upstream' | 'strict' {
+    return process.env['CANDIDATE_MODE'] === 'strict' ? 'strict' : 'upstream';
+}
+
 export function loadXPath(lib: unknown): XPathLike {
+    const mode = { mode: candidateMode() };
     const newSet = (nodes: readonly unknown[]): { toArray(): unknown } => {
         const set = construct(lib, 'XNodeSet');
         call(set, 'addArray', nodes);
         return { toArray: () => call(set, 'toArray') };
     };
     return {
-        select: (expression, node, single, options) => call(lib, 'select', expression, node, single, options),
-        parseSelect: (expression, options) => call(call(lib, 'parse', expression), 'select', options),
+        select: (expression, node, single, options) =>
+            call(lib, 'select', expression, node, single, { ...options, ...mode }),
+        parseSelect: (expression, options) => call(call(lib, 'parse', expression, mode), 'select', options),
         evaluateNodeSet: (expression, options) => {
-            const set = call(call(lib, 'parse', expression), 'evaluateNodeSet', options);
+            const set = call(call(lib, 'parse', expression, mode), 'evaluateNodeSet', options);
             return { toArray: () => call(set, 'toArray') };
         },
-        evaluateString: (expression, options) => call(call(lib, 'parse', expression), 'evaluateString', options),
+        evaluateString: (expression, options) => call(call(lib, 'parse', expression, mode), 'evaluateString', options),
         newSet,
         orderPair: (a, b) => newSet([a, b]).toArray(),
         selectWithNamespaces: (expression, node, namespaces) => {
-            const selector = call(lib, 'useNamespaces', namespaces);
+            const selector = call(lib, 'useNamespaces', namespaces, mode);
             if (!isCallable(selector)) throw new TypeError('useNamespaces did not return a function');
             return selector(expression, node);
         },
         iterate: (expression, node) => {
-            const result = call(lib, 'evaluate', expression, node, null, 5, null);
+            const result = call(lib, 'evaluate', expression, node, null, 5, null, mode);
             const out: unknown[] = [];
             for (let next = call(result, 'iterateNext'); next != null; next = call(result, 'iterateNext'))
                 out.push(next);
