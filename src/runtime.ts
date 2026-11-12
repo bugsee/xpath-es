@@ -129,6 +129,8 @@ export class EvalState {
     /** In the units of `now()` (one clock for the whole run, see clock.ts): only compared with later readings of it. */
     readonly #deadline: number;
     #nextClockCheck = CLOCK_CHECK_INTERVAL;
+    /** The work at which charge() next looks at the budget and the clock: the nearer of the two. */
+    #threshold: number;
     #calls = 0;
     readonly #prefixes = new Map<string, string>();
     /** id -> first element, per document, built once per evaluation and dropped when caller code runs. */
@@ -155,6 +157,10 @@ export class EvalState {
         this.#timeoutMs = settings.timeoutMs;
         this.#timed = settings.timeoutMs !== 0;
         this.#deadline = this.#timed ? now() + settings.timeoutMs : Number.POSITIVE_INFINITY;
+        this.#threshold = Math.min(
+            CLOCK_CHECK_INTERVAL,
+            settings.budget === 0 ? Number.POSITIVE_INFINITY : settings.budget
+        );
     }
 
     /** Total node visits charged so far. */
@@ -167,15 +173,22 @@ export class EvalState {
      * against the wall-clock limit. Every loop whose length depends on the document or on a string calls this.
      */
     charge(visits: number): void {
+        // One comparison on the common path: the work has not reached the next point at which the budget or the clock needs
+        // a look, and fewer than CLOCK_CHECK_CALLS calls have been made since the last look at the clock, whatever they
+        // charged (work that a call does not charge, a predicate or a string function on a short string, cannot keep the
+        // time limit from being looked at).
         this.#work += visits;
+        if (this.#work >= this.#threshold || ++this.#calls >= CLOCK_CHECK_CALLS) this.#check();
+    }
+
+    #check(): void {
         if (this.#budget !== 0 && this.#work > this.#budget) throw new XPathBudgetError(this.#budget);
-        // The clock is also read every CLOCK_CHECK_CALLS calls, whatever they charged: work that a call does not charge
-        // (a string function on a short string, a predicate) cannot keep the limit from being looked at.
-        if (this.#work >= this.#nextClockCheck || ++this.#calls >= CLOCK_CHECK_CALLS) {
+        if (this.#work >= this.#nextClockCheck || this.#calls >= CLOCK_CHECK_CALLS) {
             this.#calls = 0;
             this.#nextClockCheck = this.#work + CLOCK_CHECK_INTERVAL;
             if (this.#timed && now() > this.#deadline) throw new XPathTimeoutError(this.#timeoutMs);
         }
+        this.#threshold = Math.min(this.#nextClockCheck, this.#budget === 0 ? Number.POSITIVE_INFINITY : this.#budget);
     }
 
     /**
