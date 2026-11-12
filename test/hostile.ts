@@ -3,8 +3,10 @@
 //   - finish within the bound, and
 //   - give the same result as the oracle (upstream xpath), where baselines/oracle-digests.json knows it.
 //
-// Time bound: HOSTILE_BOUND_MS, default 10 000 ms per case. It is loose on purpose: the cases that matter take
-// 10-100 ms on a good engine and minutes on a quadratic one, so the gate separates the two on any CI machine.
+// Time bound: HOSTILE_BOUND_MS, default 2 000 ms per case for the engine (twice its default time limit of 1 000 ms, so a
+// loop the limits do not see fails the gate unless the case is marked `expect: 'refuse'`) and 10 000 ms for a candidate
+// without limits. It is loose on purpose: the cases that matter take 10-100 ms on a good engine and minutes on a quadratic
+// one, so the gate separates the two on any CI machine.
 //
 // Baselines: a candidate with known-slow shapes lists them by case name in baselines/<candidate>.json (or the file
 // BASELINE names). Such a case that is too slow does not fail the run, it is listed; one that is within the bound is
@@ -29,11 +31,13 @@ import { CASES } from '../bench/hostile-cases.ts';
 import { isMeasurement } from '../bench/hostile-run.ts';
 import { candidateMode, candidateSpec } from './harness.ts';
 
-const boundMs = Number(process.env['HOSTILE_BOUND_MS'] ?? 10_000);
+const engineCases = process.env['HOSTILE_ENGINE_CASES'] === '1';
+// The engine stops an evaluation at 1,000 ms (its default time limit), so a case that takes more than twice that is a loop
+// the limits do not see; a candidate without limits (the bugsee/xpath fork) is judged on the loose bound.
+const boundMs = Number(process.env['HOSTILE_BOUND_MS'] ?? (engineCases ? 2_000 : 10_000));
 const killAfterMs = boundMs + 5_000;
 const only = process.env['HOSTILE_ONLY'] === undefined ? null : new RegExp(process.env['HOSTILE_ONLY']);
 const strict = process.env['HOSTILE_STRICT'] === '1';
-const engineCases = process.env['HOSTILE_ENGINE_CASES'] === '1';
 // The scripts also run compiled to plain JavaScript (npm run build:tests, into dist-tests/): the runner is then the
 // compiled sibling, and the baselines, which are not compiled, are looked up in the working directory (the repository).
 const here = path.resolve(import.meta.dirname, '..');

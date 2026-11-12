@@ -312,5 +312,46 @@ export const CASES: readonly Case[] = [
         xml: () => `<r a="${'a'.repeat(1_000_000)}"/>`,
         reference: () => 1_000_000,
         engineOnly: true
+    },
+    // ---- cost that is in the expression, not in the document: nothing here walks the tree much, every predicate and
+    // operand is evaluated for every node (the work limit must count them, and the clock must not wait for a count) ----
+    {
+        name: 'expression cost: 2,000 predicates [1=1] on //*, 65k elements (130 million evaluations)',
+        expression: `//*${'[1=1]'.repeat(2000)}`,
+        xml: () => fit('<r>', '<a/>', '</r>', 256 * KiB),
+        reference: (doc) => allElements(doc.documentElement),
+        expect: 'refuse',
+        engineOnly: true
+    },
+    {
+        name: 'expression cost: a 20,000-operand `0 or 0 or ...` evaluated for each of 20k elements',
+        expression: `//*[${Array.from({ length: 20_000 }, () => '0').join(' or ')}]`,
+        xml: () => fit('<r>', '<a/>', '</r>', 80 * KiB),
+        reference: () => [],
+        expect: 'refuse',
+        engineOnly: true
+    },
+    {
+        name: 'expression cost: a 20,000-term sum `1+1+...=0` evaluated for each of 20k elements',
+        expression: `//*[${Array.from({ length: 20_000 }, () => '1').join('+')}=0]`,
+        xml: () => fit('<r>', '<a/>', '</r>', 80 * KiB),
+        reference: () => [],
+        expect: 'refuse',
+        engineOnly: true
+    },
+    {
+        name: 'expression cost: 20,000 calls of contains() on short strings for each of 20k elements',
+        expression: `//*[${Array.from({ length: 20_000 }, () => "contains('a','b')").join(' or ')}]`,
+        xml: () => fit('<r>', '<a/>', '</r>', 80 * KiB),
+        reference: () => [],
+        expect: 'refuse',
+        engineOnly: true
+    },
+    {
+        name: "id('x') in a predicate over 50k elements (a DOM that walks the document for each call)",
+        expression: "//*[id('x')]",
+        xml: () => `<r>${'<a/>'.repeat(50_000)}</r>`,
+        reference: () => [],
+        engineOnly: true
     }
 ];

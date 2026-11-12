@@ -3,6 +3,9 @@
 
 import { XPathSyntaxError } from './errors.ts';
 
+/** The most of the expression an error message quotes. */
+const MAX_QUOTED = 80;
+
 export type TokenKind =
     | '('
     | ')'
@@ -159,7 +162,12 @@ export function tokenize(source: string, strict: boolean = false): Token[] {
             case "'":
             case '"': {
                 const close = source.indexOf(ch, pos + 1);
-                if (close === -1) throw new XPathSyntaxError(`Unterminated string literal: ${source.slice(pos)}`);
+                if (close === -1) {
+                    // The message quotes the start of the literal, not the rest of the expression (which can be a megabyte).
+                    const shown = source.slice(pos, pos + MAX_QUOTED);
+                    const more = source.length - pos > MAX_QUOTED ? '...' : '';
+                    throw new XPathSyntaxError(`Unterminated string literal at offset ${pos}: ${shown}${more}`);
+                }
                 push('literal', source.slice(pos + 1, close));
                 pos = close + 1;
                 continue;

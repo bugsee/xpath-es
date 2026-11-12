@@ -145,7 +145,7 @@ void test('the parse cache is bounded in bytes and does not keep long expression
     const doc = parseXml('<r/>');
     for (let i = 0; i < 2000; i++) select(`/r[${i}]${'/self::node()'.repeat(120)}`, doc);
     const afterMany = parseCacheSize();
-    assert.ok(afterMany.length <= 1 << 18, `the cache holds ${afterMany.length} characters`);
+    assert.ok(afterMany.estimatedBytes <= 16 << 20, `the cache is estimated at ${afterMany.estimatedBytes} bytes`);
     assert.ok(afterMany.entries <= 512);
     // An expression beyond the cacheable length is parsed again and not kept.
     select(`/r${'/self::node()'.repeat(400)}`, doc);

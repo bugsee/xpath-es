@@ -20,7 +20,7 @@ import {
 import type { DomNode } from './dom.ts';
 import { XPathContextError, XPathError, XPathSyntaxError, XPathTypeError } from './errors.ts';
 import { sortInDocumentOrder } from './order.ts';
-import { lookupNamespaceInDom, XPathProgram } from './program.ts';
+import { lookupNamespaceInDom, parseMode, XPathProgram } from './program.ts';
 import type { XPathMode } from './program.ts';
 import type { RawEvaluateOptions } from './program.ts';
 import { NodeSet, numberToString, stringToNumber, stringValueOf, toNumberValue } from './runtime.ts';
@@ -191,18 +191,21 @@ function unwrap(value: unknown): XValue | null {
 // ---- parse cache: expression text -> program. Holds no DOM state; bounded in entries and in bytes. ----
 
 /**
- * A byte-bounded LRU. A program is several times the size of its source (the tree, closures), so the cache is bounded
- * by the total length of the sources it holds, not only by the number of entries, and an expression longer than
- * CACHEABLE_LENGTH is not cached at all (an attacker's 1 MB expression must not pin 100 MB; such an expression is
- * parsed again each time, which is linear).
+ * A byte-bounded LRU. A program is far larger than its source (the tree, the closures): measured, 70 to 420 bytes per
+ * character of source depending on the shape (a union of many names is the densest), so the cache is bounded by an
+ * estimate of the memory it retains, ESTIMATED_BYTES_PER_CHAR for each character of source, not by the length of the
+ * sources, and an expression longer than CACHEABLE_LENGTH is not cached at all (an attacker's 1 MB expression must not
+ * pin 100 MB; such an expression is parsed again each time, which is linear).
  */
 const CACHE_ENTRIES = 512;
-const CACHE_TOTAL_LENGTH = 1 << 18;
+const ESTIMATED_BYTES_PER_CHAR = 512;
+const CACHE_TOTAL_BYTES = 16 << 20;
 const CACHEABLE_LENGTH = 2048;
 const programs = new Map<string, XPathProgram>();
 let cachedLength = 0;
 
-function programFor(expression: unknown, mode: XPathMode = 'strict'): XPathProgram {
+function programFor(expression: unknown, requested?: unknown): XPathProgram {
+    const mode = parseMode(requested);
     if (!expression) throw new XPathSyntaxError('XPath expression unspecified.');
     if (typeof expression !== 'string') throw new XPathSyntaxError('XPath expression must be a string.');
     if (expression.length > CACHEABLE_LENGTH) return new XPathProgram(expression, { mode });
@@ -218,7 +221,7 @@ function programFor(expression: unknown, mode: XPathMode = 'strict'): XPathProgr
     programs.set(key, program);
     cachedLength += key.length;
     for (const [oldest, old] of programs) {
-        if (programs.size <= CACHE_ENTRIES && cachedLength <= CACHE_TOTAL_LENGTH) break;
+        if (programs.size <= CACHE_ENTRIES && cachedLength * ESTIMATED_BYTES_PER_CHAR <= CACHE_TOTAL_BYTES) break;
         if (old === program) break;
         programs.delete(oldest);
         cachedLength -= oldest.length;
@@ -226,9 +229,13 @@ function programFor(expression: unknown, mode: XPathMode = 'strict'): XPathProgr
     return program;
 }
 
-/** Entries and characters held by the parse cache (for the tests). */
-export function parseCacheSize(): { readonly entries: number; readonly length: number } {
-    return { entries: programs.size, length: cachedLength };
+/** Entries, characters and the estimate of the bytes they retain, held by the parse cache (for the tests). */
+export function parseCacheSize(): {
+    readonly entries: number;
+    readonly length: number;
+    readonly estimatedBytes: number;
+} {
+    return { entries: programs.size, length: cachedLength, estimatedBytes: cachedLength * ESTIMATED_BYTES_PER_CHAR };
 }
 
 function contextNodeOf(node: unknown): DomNode | null {
@@ -264,6 +271,9 @@ export interface SelectOptions {
     readonly mode?: XPathMode | undefined;
 }
 
+/** Resolvers made from a plain map (useNamespaces): data, not caller code, so they do not make an evaluation impure. */
+const DATA_RESOLVERS = new WeakSet<XPathNSResolver>();
+
 function runSelect(
     expression: unknown,
     node: unknown,
@@ -276,6 +286,7 @@ function runSelect(
     return program.runRaw({
         node: contextNode,
         namespaces,
+        callbacks: { namespaces: resolver == null || !DATA_RESOLVERS.has(resolver) },
         caseInsensitive: program.mode === 'strict' ? isHtmlDocument(contextNode) : detectHtmlDom(contextNode),
         budget: options?.budget,
         timeoutMs: options?.timeoutMs
@@ -370,9 +381,11 @@ export function select1(expression: string, node?: DomNode | null, options?: Sel
  * passes its own options.
  */
 export function useNamespaces(mappings: Readonly<Record<string, string>>, defaults?: SelectOptions): XPathSelect {
+    if (defaults !== undefined) parseMode(defaults.mode);
     const resolver: XPathNSResolver = {
         lookupNamespaceURI: (prefix) => (Object.hasOwn(mappings, prefix) ? mappings[prefix] : undefined)
     };
+    DATA_RESOLVERS.add(resolver);
     function selectWithMappings(
         expression: string,
         node?: DomNode | null,
@@ -461,6 +474,11 @@ function toEngineOptions(options: XPathEvaluateOptions | undefined): RawEvaluate
     const namespaces = lookupFrom(options.namespaces, 'getNamespace');
     const variables = lookupFrom(options.variables, 'getVariable');
     const functions = lookupFrom(options.functions, 'getFunction');
+    // A table of functions that is plain data names what it defines; a lookup function can define anything.
+    const functionNames =
+        functions !== null && !functions.callback && isRecord(options.functions)
+            ? new Set(Object.keys(options.functions))
+            : null;
     const namespaceLookup: NamespaceLookup | undefined =
         namespaces === null
             ? undefined
@@ -495,7 +513,11 @@ function toEngineOptions(options: XPathEvaluateOptions | undefined): RawEvaluate
         namespaces: namespaceLookup,
         variables: variableLookup,
         functions: functionLookup,
-        callbacks: { namespaces: namespaces?.callback ?? false, variables: variables?.callback ?? false },
+        callbacks: {
+            namespaces: namespaces?.callback ?? false,
+            variables: variables?.callback ?? false,
+            ...(functionNames === null ? {} : { functionNames })
+        },
         caseInsensitive: options.isHtml === true,
         allowAnyNamespaceForNoPrefix: options.allowAnyNamespaceForNoPrefix ?? options.isHtml === true,
         budget: options.budget,

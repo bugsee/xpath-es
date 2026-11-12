@@ -241,6 +241,8 @@ export function compileCall(name: string, args: readonly Compiled[]): Compiled {
     const [prefix, localName] = splitQName(name);
     const core = prefix === null ? compileCoreFunction(localName, args) : null;
     return (focus, state) => {
+        // One unit per call, so that a call on short strings (which charges nothing by length) is not free.
+        state.charge(1);
         const lookup = state.settings.functions;
         if (lookup !== null || prefix !== null) {
             const namespace = prefix === null ? '' : state.resolvePrefix(prefix, focus.node);
@@ -327,6 +329,22 @@ const CONTEXT_DEFAULTING = new Set([
  * count: a predicate inside a step sees the step's own nodes.
  */
 export function dependsOnDocumentOnly(expr: Expr): boolean {
+    const known = documentOnlyFacts.get(expr);
+    if (known !== undefined) return known;
+    const answer = computeDocumentOnly(expr);
+    documentOnlyFacts.set(expr, answer);
+    return answer;
+}
+
+/**
+ * The static facts of each AST node, worked out once: compile() asks about every node on the way down, and a fact about
+ * a subtree is built from the facts of its children, so asking again at each level would read each subtree once per
+ * level of nesting (quadratic in the size of a deeply nested expression).
+ */
+const documentOnlyFacts = new WeakMap<Expr, boolean>();
+const walkFacts = new WeakMap<Expr, boolean>();
+
+function computeDocumentOnly(expr: Expr): boolean {
     switch (expr.kind) {
         case 'literal':
         case 'number':
@@ -357,6 +375,14 @@ export function dependsOnDocumentOnly(expr: Expr): boolean {
 
 /** Does evaluating the expression walk anything (a location step)? Only those are worth remembering. */
 function walksTheDocument(expr: Expr): boolean {
+    const known = walkFacts.get(expr);
+    if (known !== undefined) return known;
+    const answer = computeWalks(expr);
+    walkFacts.set(expr, answer);
+    return answer;
+}
+
+function computeWalks(expr: Expr): boolean {
     switch (expr.kind) {
         case 'literal':
         case 'number':
@@ -417,14 +443,20 @@ function compileExpression(expr: Expr): Compiled {
         case 'or': {
             const operands = expr.operands.map(compile);
             return (focus, state) => {
-                for (const operand of operands) if (toBooleanValue(operand(focus, state))) return true;
+                for (const operand of operands) {
+                    state.charge(1);
+                    if (toBooleanValue(operand(focus, state))) return true;
+                }
                 return false;
             };
         }
         case 'and': {
             const operands = expr.operands.map(compile);
             return (focus, state) => {
-                for (const operand of operands) if (!toBooleanValue(operand(focus, state))) return false;
+                for (const operand of operands) {
+                    state.charge(1);
+                    if (!toBooleanValue(operand(focus, state))) return false;
+                }
                 return true;
             };
         }
@@ -435,18 +467,24 @@ function compileExpression(expr: Expr): Compiled {
             if (rest.length === 1 && only !== undefined) {
                 const { op, operand } = only;
                 if (isArithmetic(op)) {
-                    return (focus, state) =>
-                        arithmetic(
+                    return (focus, state) => {
+                        state.charge(1);
+                        return arithmetic(
                             op,
                             toNumberValue(first(focus, state), state),
                             toNumberValue(operand(focus, state), state)
                         );
+                    };
                 }
-                return (focus, state) => compareValues(op, first(focus, state), operand(focus, state), state);
+                return (focus, state) => {
+                    state.charge(1);
+                    return compareValues(op, first(focus, state), operand(focus, state), state);
+                };
             }
             return (focus, state) => {
                 let left = first(focus, state);
                 for (const { op, operand } of rest) {
+                    state.charge(1);
                     if (isArithmetic(op)) {
                         // Left operand to a number before the right operand is evaluated, as upstream orders it.
                         const a = toNumberValue(left, state);
@@ -460,7 +498,10 @@ function compileExpression(expr: Expr): Compiled {
         }
         case 'negate': {
             const operand = compile(expr.operand);
-            return (focus, state) => -toNumberValue(operand(focus, state), state);
+            return (focus, state) => {
+                state.charge(1);
+                return -toNumberValue(operand(focus, state), state);
+            };
         }
         case 'union':
             return compileUnion(expr.operands.map(compile));
@@ -478,6 +519,7 @@ function compileExpression(expr: Expr): Compiled {
             const [prefix, localName] = splitQName(expr.name);
             const { name } = expr;
             return (focus, state) => {
+                state.charge(1);
                 const namespace = prefix === null ? '' : state.resolvePrefix(prefix, focus.node);
                 const value = state.settings.variables?.(localName, namespace);
                 if (!state.pure) state.userCodeRan();
@@ -493,6 +535,8 @@ export interface ExpressionFacts {
     readonly usesPrefixes: boolean;
     readonly usesVariables: boolean;
     readonly usesFunctions: boolean;
+    /** The local name of every function the expression calls (to know whether a table of custom functions can be reached). */
+    readonly functionNames: ReadonlySet<string>;
     /** Every prefix the expression uses (name tests, function names, variable names), for strict mode's early check. */
     readonly prefixes: ReadonlySet<string>;
 }
@@ -503,6 +547,7 @@ export function expressionFacts(root: Expr): ExpressionFacts {
     let usesVariables = false;
     let usesFunctions = false;
     const prefixes = new Set<string>();
+    const functionNames = new Set<string>();
     // Explicit work list: the AST can be wide, and this must not recurse.
     const pending: Expr[] = [root];
     for (let expr = pending.pop(); expr !== undefined; expr = pending.pop()) {
@@ -535,6 +580,7 @@ export function expressionFacts(root: Expr): ExpressionFacts {
                 break;
             case 'call':
                 usesFunctions = true;
+                functionNames.add(splitQName(expr.name)[1]);
                 if (expr.name.includes(':')) {
                     usesPrefixes = true;
                     prefixes.add(expr.name.slice(0, expr.name.indexOf(':')));
@@ -553,5 +599,5 @@ export function expressionFacts(root: Expr): ExpressionFacts {
                 break;
         }
     }
-    return { usesPrefixes, usesVariables, usesFunctions, prefixes };
+    return { usesPrefixes, usesVariables, usesFunctions, functionNames, prefixes };
 }

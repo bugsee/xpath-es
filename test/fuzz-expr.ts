@@ -13,7 +13,16 @@
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { isReport } from './fuzz-expr-worker.ts';
+import {
+    isReport,
+    PHASE_CANDIDATE,
+    PHASE_COMPARING,
+    PHASE_IDLE,
+    PHASE_LOADING,
+    PHASE_UPSTREAM,
+    PROGRESS_BYTES,
+    progressViews
+} from './fuzz-expr-worker.ts';
 import type { Job, Kind } from './fuzz-expr-worker.ts';
 import { documentText, makeExpressionGenerator } from './generate.ts';
 import { isDomName, makeRandom } from './harness.ts';
@@ -35,6 +44,29 @@ let compared = 0;
 let unparsable = 0;
 
 /** Runs one batch; resolves with the index of the expression that timed out, or -1 when the batch finished. */
+const PHASES: Readonly<Record<number, string>> = {
+    [PHASE_IDLE]: 'between expressions',
+    [PHASE_LOADING]: 'loading the DOM and the engines',
+    [PHASE_CANDIDATE]: 'the candidate',
+    [PHASE_UPSTREAM]: 'upstream',
+    [PHASE_COMPARING]: 'comparing'
+};
+
+/** Where the worker was when it was stopped, read from the memory it shares (see fuzz-expr-worker.ts). */
+function whereTheTimeWent(progress: SharedArrayBuffer): string {
+    const { ints, floats } = progressViews(progress);
+    const now = performance.timeOrigin + performance.now();
+    const phase = Atomics.load(ints, 1);
+    const context = Atomics.load(ints, 2);
+    const spent = Array.from(floats.slice(3, 3 + 12)).filter((ms) => ms > 0);
+    return (
+        `worker was in "${PHASES[phase] ?? phase}" (expression ${Atomics.load(ints, 0)}, context ${context}) for ` +
+        `${Math.round(now - (floats[0] ?? now))} ms; started ${Math.round(now - (floats[1] ?? now))} ms ago, ` +
+        `ready ${(floats[2] ?? 0) > 0 ? `${Math.round((floats[2] ?? 0) - (floats[1] ?? 0))} ms after start` : 'never'}; ` +
+        `candidate ms per context so far: [${spent.map((ms) => ms.toFixed(1)).join(', ')}]`
+    );
+}
+
 function runBatch(job: Job): Promise<number> {
     return new Promise((resolve, reject) => {
         const worker = new Worker(new URL(`./fuzz-expr-worker${path.extname(import.meta.filename)}`, import.meta.url));
@@ -44,8 +76,11 @@ function runBatch(job: Job): Promise<number> {
         function expire(): void {
             if (candidateDone) slow.upstream++;
             else slow.candidate++;
+            const where = whereTheTimeWent(job.progress);
             if (slowSamples.length < 5)
-                slowSamples.push(`${candidateDone ? 'upstream' : 'candidate'}: ${job.expressions[current] ?? ''}`);
+                slowSamples.push(
+                    `${candidateDone ? 'upstream' : 'candidate'}: ${job.expressions[current] ?? ''}\n     diagnostic: ${where}`
+                );
             // FUZZ_DUMP=<file prefix> keeps the document, the expression and the context picks of a slow case.
             const dump = process.env['FUZZ_DUMP'];
             if (dump !== undefined)
@@ -72,7 +107,10 @@ function runBatch(job: Job): Promise<number> {
                 void worker.terminate().then(() => resolve(-1));
                 return;
             }
+            // The limit is for evaluating, not for starting a worker (a DOM such as jsdom takes a while to load): the
+            // clock starts when the worker says it is ready.
             timer = setTimeout(expire, limit);
+            if (message.type === 'ready') return;
             if (message.type === 'candidate-done') {
                 current = message.at;
                 candidateDone = true;
@@ -103,7 +141,13 @@ for (let d = 0; d < documents; d++) {
     while (expressions.length > 0) {
         // A worker that fails for any reason but an unparsable document (the oracle or the candidate cannot be loaded,
         // an exception outside an evaluation) rejects here and fails the whole run.
-        const stoppedAt = await runBatch({ dom: domName, xml, expressions, picks });
+        const stoppedAt = await runBatch({
+            dom: domName,
+            progress: new SharedArrayBuffer(PROGRESS_BYTES),
+            xml,
+            expressions,
+            picks
+        });
         if (stoppedAt < 0) break;
         expressions = expressions.slice(stoppedAt + 1);
     }
@@ -116,7 +160,7 @@ console.log(`upstream gave ${shapes['node-set']} node-sets, ${shapes.scalar} sca
 console.log(
     `equal ${tally.equal}; differences: result ${tally.result}, mixed-kind sets ${tally.mixed}, order-only ${tally.order}, error-message-only ${tally.message}, documented classes ${tally.documented}`
 );
-for (const sample of slowSamples) console.log(`  slow ${sample.slice(0, 200)}`);
+for (const sample of slowSamples) console.log(`  slow ${sample.slice(0, 600)}`);
 for (const [expression, sample] of samples) console.log(`  ${expression}\n     ${sample}`);
 const tolerated = new Set((process.env['TOLERATE'] ?? '').split(','));
 // A run that compared nothing proves nothing.

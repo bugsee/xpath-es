@@ -26,18 +26,24 @@ void test('useNamespaces(...) is linear: a predicate that sorts two nodes per co
     assert.equal(found.length, 0);
 });
 
-void test('a namespace resolver function is linear and is still asked at every name test', () => {
-    let asked = 0;
-    const found = parse('//a:x[string(a:y)="q"]').select({
-        node: doc,
-        namespaces: (prefix: string) => {
-            asked++;
-            return prefix === 'a' ? 'urn:x' : null;
-        },
-        budget: LINEAR_BUDGET
-    });
-    assert.equal(found.length, 0);
-    assert.ok(asked >= N, `the resolver was asked ${asked} times`);
+void test('a namespace resolver function is linear; upstream mode asks it at every name test, strict mode once per prefix', () => {
+    const count = (mode: 'strict' | 'upstream'): { found: number; asked: number } => {
+        let asked = 0;
+        const found = parse('//a:x[string(a:y)="q"]', { mode }).select({
+            node: doc,
+            namespaces: (prefix: string) => {
+                asked++;
+                return prefix === 'a' ? 'urn:x' : null;
+            },
+            budget: LINEAR_BUDGET
+        });
+        return { found: found.length, asked };
+    };
+    const upstream = count('upstream');
+    assert.equal(upstream.found, 0);
+    assert.ok(upstream.asked >= N, `the resolver was asked ${upstream.asked} times`);
+    // Section 1: the namespace declarations of the expression context are fixed for the evaluation.
+    assert.deepEqual(count('strict'), { found: 0, asked: 1 });
 });
 
 void test('a custom function (which may change the document) does not make a sort per context node cost a whole-tree numbering', () => {

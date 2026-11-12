@@ -12,13 +12,21 @@ import { ATTRIBUTE_NODE, isNamespaceNode, treeRoot, XML_NAMESPACE_URI } from './
 import type { DomNode } from './dom.ts';
 import { XPathOrderError } from './errors.ts';
 
+/** Nodes between two charges while a tree is numbered. */
+export const NUMBERING_BATCH = 4096;
+
 export class Numbering {
     readonly #root: DomNode;
     readonly #index = new Map<DomNode, number>();
     readonly #byIndex: DomNode[] = [];
     readonly #attributeKeys = new Map<DomNode, number>();
 
-    constructor(anyNode: DomNode) {
+    /**
+     * `charge` is told the size of each batch of nodes as the walk goes (every BATCH nodes), so that a walk that never
+     * ends (a cyclic DOM) is stopped by the limits of the evaluation while it runs; the remainder is the caller's
+     * (`size % BATCH`, see EvalState.numbered).
+     */
+    constructor(anyNode: DomNode, charge?: (units: number) => void) {
         const root = treeRoot(anyNode);
         this.#root = root;
         const index = this.#index;
@@ -28,6 +36,7 @@ export class Numbering {
         while (node != null) {
             index.set(node, byIndex.length);
             byIndex.push(node);
+            if (charge !== undefined && byIndex.length % NUMBERING_BATCH === 0) charge(NUMBERING_BATCH);
             let next: DomNode | null | undefined = node.firstChild;
             while (next == null && node != null && node !== root) {
                 next = node.nextSibling;

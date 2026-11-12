@@ -19,27 +19,34 @@ void test('a single context node: strict preceding:: does not number the documen
     assert.ok(program.run({ node: first }).work < 20);
 });
 
-void test('a namespace callback is asked at every name test: the one-pass preceding:: is not used', () => {
+void test('a namespace callback: upstream mode asks it per name test, strict mode once per prefix; fast and slow paths agree', () => {
     const doc = parseXml('<r xmlns:p="urn:x"><p:a/><b/><c/></r>');
-    const outcome = (): { found: string[]; asked: number } => {
+    const outcome = (mode: 'strict' | 'upstream'): { found: string[]; asked: number } => {
         let asked = 0;
+        // A resolver whose answers change from call to call: only a mode that asks once is deterministic about it.
         const namespaces = (prefix: string): string | null => {
             asked++;
             return prefix === 'p' ? (asked % 2 === 0 ? 'urn:x' : 'urn:other') : null;
         };
-        const program = new XPathProgram('(/r/b | /r/c)/preceding::p:a', { mode: 'strict' });
+        const program = new XPathProgram('(/r/b | /r/c)/preceding::p:a', { mode });
         const value = program.run({ node: doc, namespaces }).value;
         assert.ok(Array.isArray(value));
         return { found: value.map((node: DomNode) => node.nodeName), asked };
     };
-    const normal = outcome();
-    XPathProgram.forceSlowPath = true;
-    try {
-        assert.deepEqual(normal, outcome());
-    } finally {
-        XPathProgram.forceSlowPath = false;
+    for (const mode of ['upstream', 'strict'] as const) {
+        const normal = outcome(mode);
+        XPathProgram.forceSlowPath = true;
+        try {
+            // Upstream mode asks per name test, and the fast and slow paths do not test the same number of nodes.
+            const slow = outcome(mode);
+            assert.deepEqual(mode === 'strict' ? slow : slow.found, mode === 'strict' ? normal : normal.found, mode);
+        } finally {
+            XPathProgram.forceSlowPath = false;
+        }
+        if (mode === 'upstream') assert.ok(normal.asked >= 2, 'the callback was asked once per name test per context');
+        // Strict: asked once, so the first answer ('urn:other') is the binding for the whole evaluation.
+        else assert.deepEqual(normal, { found: [], asked: 1 });
     }
-    assert.ok(normal.asked >= 2, 'the callback was asked once per name test per context');
 });
 
 void test('evaluate() with NUMBER_TYPE follows the mode: strict converts a node-set by the grammar of 4.4', () => {

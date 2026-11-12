@@ -13,8 +13,25 @@ import { loadInternedOracle } from './support/interned-oracle.ts';
 /** `documented`: a difference in a documented class (CLASSIFY, see the README); it does not fail the run. */
 export type Kind = 'equal' | 'message' | 'order' | 'mixed' | 'result' | 'documented';
 
+/**
+ * Where the worker is, in memory the parent can read while the worker is busy (a timed-out evaluation cannot report):
+ * Int32 slots [expression, phase, context] and Float64 slots [phase start, worker start, ready, candidate ms per context...].
+ * The parent prints it when it stops an evaluation, so that a timeout says where the time went.
+ */
+export const PHASE_IDLE: number = 0;
+export const PHASE_LOADING: number = 1;
+export const PHASE_CANDIDATE: number = 2;
+export const PHASE_UPSTREAM: number = 3;
+export const PHASE_COMPARING: number = 4;
+export const PROGRESS_BYTES: number = 32 + 8 * 64;
+
+export function progressViews(buffer: SharedArrayBuffer): { ints: Int32Array; floats: Float64Array } {
+    return { ints: new Int32Array(buffer, 0, 8), floats: new Float64Array(buffer, 32, 64) };
+}
+
 export interface Job {
     readonly dom: string;
+    readonly progress: SharedArrayBuffer;
     readonly xml: string;
     readonly expressions: readonly string[];
     /** Two numbers in [0, 1) that pick the extra context nodes. */
@@ -22,6 +39,8 @@ export interface Job {
 }
 
 export type Report =
+    /** The document is parsed and both engines are loaded: the parent's clock starts here, not at worker start. */
+    | { readonly type: 'ready' }
     /** The candidate has answered expression `at` for every context; upstream is next. */
     | { readonly type: 'candidate-done'; readonly at: number }
     | {
@@ -40,6 +59,7 @@ export function isJob(value: unknown): value is Job {
         typeof value === 'object' &&
         value !== null &&
         'dom' in value &&
+        'progress' in value &&
         'xml' in value &&
         'expressions' in value &&
         'picks' in value
@@ -54,6 +74,15 @@ const members = (text: string): string[] => (text.startsWith('[') ? text.slice(1
 
 function run(job: Job, send: (report: Report) => void): void {
     if (!isDomName(job.dom)) throw new Error(`unknown DOM ${job.dom}`);
+    const { ints, floats } = progressViews(job.progress);
+    const mark = (phase: number, at: number, context: number): void => {
+        Atomics.store(ints, 0, at);
+        Atomics.store(ints, 2, context);
+        floats[0] = performance.timeOrigin + performance.now();
+        Atomics.store(ints, 1, phase);
+    };
+    floats[1] = performance.timeOrigin + performance.now();
+    mark(PHASE_LOADING, 0, 0);
     const upstream = loadOracle();
     const interned = loadInternedOracle();
     const classify = process.env['CLASSIFY'] ?? '';
@@ -123,14 +152,25 @@ function run(job: Job, send: (report: Report) => void): void {
         }
         return `${String(text)} | ${nodes}`;
     };
+    floats[2] = performance.timeOrigin + performance.now();
+    send({ type: 'ready' });
     job.expressions.forEach((expression, at) => {
-        const actual = contexts.map((node) => attempt(() => evaluate(candidate, expression, node)));
+        const actual = contexts.map((node, c) => {
+            mark(PHASE_CANDIDATE, at, c);
+            const began = performance.now();
+            const answer = attempt(() => evaluate(candidate, expression, node));
+            if (c < 60) floats[3 + c] = performance.now() - began;
+            return answer;
+        });
+        mark(PHASE_UPSTREAM, at, 0);
         send({ type: 'candidate-done', at });
         const kinds: Kind[] = [];
         const shapes: ('node-set' | 'scalar' | 'error')[] = [];
         let sample: string | null = null;
         contexts.forEach((node, c) => {
+            mark(PHASE_UPSTREAM, at, c);
             const expected = attempt(() => evaluate(upstream, expression, node));
+            mark(PHASE_COMPARING, at, c);
             const got = actual[c] ?? '';
             const a = expected.startsWith('ERR');
             const b = got.startsWith('ERR');
@@ -159,6 +199,7 @@ function run(job: Job, send: (report: Report) => void): void {
                 sample = `${kind} @${node.nodeName}/${node.nodeType}\n     upstream:  ${expected.slice(0, 150)}\n     candidate: ${got.slice(0, 150)}`;
             }
         });
+        mark(PHASE_IDLE, at, 0);
         send({ type: 'expression-done', at, kinds, shapes, sample });
     });
     send({ type: 'batch-done' });
