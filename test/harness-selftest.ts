@@ -138,6 +138,42 @@ try {
         brokenWorker.status !== 0,
         brokenWorker.output
     );
+    // A candidate that does not come back within the time limit fails the expression fuzzer.
+    const hanging = run(
+        'fuzz-expr.ts',
+        ['xmldom08', '6', '60', '3', 'ns', '800'],
+        { CANDIDATE: './test/fixtures/hanging-candidate.ts' },
+        300_000
+    );
+    check(
+        'expression fuzzer: a candidate that times out fails the run',
+        hanging.status === 1 && /candidate did not come back/.test(hanging.output),
+        hanging.output
+    );
+    // Strict mode must not regress: with the deviating expressions let in, the agreement check must find differences.
+    const modesAll = run('mode-agreement.ts', ['12', '60', '5'], { MODE_AGREEMENT_ALL: '1' }, 120_000);
+    check(
+        'mode agreement: with the deviating expressions included it finds differences',
+        modesAll.status === 1 && /[1-9]\d* differences/.test(modesAll.output),
+        modesAll.output
+    );
+    // A case the candidate must refuse (the oracle's own answer is not a refusal) fails the hostile gate.
+    const answeredARefusal = run(
+        'hostile.ts',
+        [],
+        {
+            CANDIDATE: 'xpath',
+            HOSTILE_ENGINE_CASES: '1',
+            HOSTILE_ONLY: 'a chain 5,000 deep \\(every',
+            HOSTILE_STRICT: '1'
+        },
+        180_000
+    );
+    check(
+        'hostile gate: a candidate that answers a case it must refuse fails',
+        answeredARefusal.status === 1 && /answered a case it must refuse/.test(answeredARefusal.output),
+        answeredARefusal.output
+    );
     const reorderingMutations = run('mutation.ts', [], { CANDIDATE: REORDERING }, 60_000);
     check(
         'mutation scenarios: the reversing candidate is caught too',

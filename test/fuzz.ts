@@ -29,6 +29,7 @@ import {
 import { allowedClasses, classifyDifference, DOCUMENTED } from './support/classify.ts';
 import type { Scenario } from './support/classify.ts';
 import { isDomNode } from './support/dom.ts';
+import { categoryOfDescription } from './support/errors.ts';
 import { loadInternedOracle } from './support/interned-oracle.ts';
 import type { DomNode } from './support/dom.ts';
 
@@ -38,6 +39,8 @@ const documents = Number(process.argv[3] ?? 200);
 const random = makeRandom(Number(process.argv[4] ?? 12345));
 const queries = process.argv[5] === 'all' ? CORPUS : FUZZ_QUERIES;
 const parse = loadDom(domName);
+/** The engine's limits off, for the class-6 check (upstream and the fork ignore the options). */
+const UNLIMITED = { budget: 0, timeoutMs: 0 };
 const upstream = loadOracle();
 const interned = loadInternedOracle();
 const candidate = loadCandidate();
@@ -80,19 +83,20 @@ function record(
     expected: string,
     actual: string,
     special: (text: string) => boolean,
-    interned?: () => string
+    interned?: () => string,
+    unlimited?: () => string
 ): void {
     let kind: Kind = 'result';
     const a = expected.startsWith('ERR');
     const b = actual.startsWith('ERR');
     if (a) upstreamThrows++;
     if (expected === actual) kind = 'equal';
-    else if (a && b) kind = 'message';
+    else if (a && b) kind = categoryOfDescription(expected) === categoryOfDescription(actual) ? 'message' : 'result';
     else if (!a && !b && members(expected).join() === members(actual).join()) kind = 'order';
     else if (special(expected) || special(actual)) kind = 'mixed';
     const key = `${scenario}/${kind}`;
     if (kind === 'result' || kind === 'mixed' || kind === 'order') {
-        const cls = classifyDifference(scenario, what, expected, actual, interned, allowed);
+        const cls = classifyDifference(scenario, what, expected, actual, interned, allowed, unlimited);
         const slot = cls ?? 'UNCLASSIFIED';
         classes.set(slot, (classes.get(slot) ?? 0) + 1);
         if (cls === null && unclassified.length < 8)
@@ -112,6 +116,13 @@ function specialTest(index: ReadonlyMap<unknown, number>, nodes: readonly DomNod
         text.includes('ns:') || text.includes('UNKNOWN') || members(text).some((item) => attributeIds.has(item));
 }
 
+/**
+ * A document type, an entity (reference) or a notation is not a node of the XPath data model (section 5), and upstream's
+ * string value of one is JavaScript null (string() answers null, string-length() throws), so an evaluation does not start
+ * there. They stay in the documents: `//node()` walks past them.
+ */
+const inDataModel = (node: DomNode): boolean => ![5, 6, 10, 12].includes(node.nodeType);
+
 function compareQueries(
     scenario: Scenario,
     contexts: readonly (DomNode | undefined)[],
@@ -121,7 +132,7 @@ function compareQueries(
     const special = specialTest(index, nodes);
     for (const query of queries) {
         for (const node of contexts) {
-            if (node === undefined) continue;
+            if (node === undefined || !inDataModel(node)) continue;
             const expected = attempt(() => upstream.select(query, node), index);
             const actual = attempt(() => candidate.select(query, node), index);
             record(
@@ -130,7 +141,8 @@ function compareQueries(
                 expected,
                 actual,
                 (text) => special(text) || node.nodeType === 2,
-                () => attempt(() => interned.select(query, node), index)
+                () => attempt(() => interned.select(query, node), index),
+                () => attempt(() => candidate.select(query, node, false, UNLIMITED), index)
             );
         }
     }

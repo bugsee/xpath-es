@@ -118,3 +118,37 @@ test('the clock falls back to Date.now() when there is no usable performance obj
         assert.ok(Math.abs(reading - wall) < 5000, `reading ${reading} is not near Date.now() ${wall}`);
     }
 });
+
+test('an error from one build is recognised by the other: isXPathError, code, and the documented instanceof caveat', () => {
+    // The ES module build and the CommonJS build are two copies of the classes: `instanceof` is false across them.
+    const doc = parseXml(XML);
+    let fromEsm = null;
+    try {
+        new esm.XPathProgram('//item').run({ node: doc, budget: 1 });
+    } catch (error) {
+        fromEsm = error;
+    }
+    assert.ok(fromEsm instanceof esm.XPathBudgetError);
+    assert.equal(
+        fromEsm instanceof cjs.XPathBudgetError,
+        false,
+        'the two builds share a class: the hazard is gone, update the README'
+    );
+    assert.equal(cjs.isXPathError(fromEsm), true);
+    assert.equal(esm.isXPathError(fromEsm), true);
+    assert.equal(fromEsm.code, 'BUDGET');
+    assert.equal(esm.isXPathError(new Error('x')), false);
+    assert.equal(esm.isXPathError({ code: 'BUDGET' }), false);
+    let timeout = null;
+    try {
+        new cjs.XPathProgram('count(//item[count(preceding::item) >= 0])').run({
+            node: parseXml(`<r>${'<item/>'.repeat(6000)}</r>`),
+            budget: 0,
+            timeoutMs: 5
+        });
+    } catch (error) {
+        timeout = error;
+    }
+    assert.equal(esm.isXPathError(timeout), true);
+    assert.equal(timeout.code, 'TIMEOUT');
+});

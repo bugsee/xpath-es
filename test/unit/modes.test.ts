@@ -192,6 +192,19 @@ for (const item of CASES) {
     });
 }
 
+void test('id() answers the first element of a duplicated ID, with few tokens and with many (one index per evaluation)', () => {
+    const xml =
+        '<r><e id="d" n="first"/><e id="d" n="second"/>' +
+        Array.from({ length: 12 }, (_, i) => `<e id="t${i}"/>`).join('') +
+        '</r>';
+    const many = `id("d ${Array.from({ length: 12 }, (_, i) => `t${i}`).join(' ')}")`;
+    for (const mode of ['upstream', 'strict'] as const) {
+        assert.equal(answer(mode, 'string(id("d")/@n)', xml), 'string:first', `${mode}, one token`);
+        assert.equal(answer(mode, `string(${many}/@n)`, xml), 'string:first', `${mode}, thirteen tokens`);
+        assert.equal(answer(mode, `count(${many})`, xml), 'number:13', `${mode}: one element per distinct token`);
+    }
+});
+
 void test('a NUL character is the end of the expression in upstream mode and a syntax error in strict mode', () => {
     assert.equal(answer('upstream', '1 + 2\u0000 garbage', DOC), 'number:3');
     assert.equal(answer('strict', '1 + 2\u0000 garbage', DOC), 'SYNTAX');

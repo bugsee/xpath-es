@@ -5,107 +5,230 @@
         "65k <a/> siblings": {
             "digest": "6126b8424c7f",
             "size": 65535,
+            "source": "oracle",
             "oracleMs": 30507
         },
         "cousins: 23k <a><b/></a>": {
             "digest": "46b2720dd2ba",
             "size": 47661,
+            "source": "oracle",
             "oracleMs": 7321
         },
         "one element, 30k attributes (xml-crypto ID lookup)": {
             "digest": "4f53cda18c2b",
             "size": 0,
+            "source": "oracle",
             "oracleMs": 6252
         },
         "one element, 30k attributes, all selected": {
             "digest": "4576ce675046",
             "size": 30000,
+            "source": "oracle",
             "oracleMs": 5881
         },
         "23k <a ID=\"y\"/>, all attributes": {
             "digest": "93f476ff2436",
             "size": 23830,
+            "source": "oracle",
             "oracleMs": 3565
         },
         "chain 9,000 deep": {
             "digest": "f1fe5412d3f8",
             "size": 9000,
+            "source": "oracle",
             "oracleMs": 6697
         },
         "chain 9,000 deep, ancestors of all": {
             "digest": "fc5e37e21096",
             "size": 8999,
+            "source": "oracle",
             "oracleMs": 43908
         },
         "8k siblings, nearest preceding sibling": {
-            "digest": null,
-            "size": null,
+            "digest": "2001b0e5ed90",
+            "size": 8189,
+            "source": "reference",
             "oracleMs": null
         },
         "8k siblings, all following siblings": {
             "digest": "aa7355a7696b",
             "size": 8189,
+            "source": "oracle",
             "oracleMs": 57168
         },
         "8k siblings, count(preceding-sibling)": {
             "digest": "fe94b827f045",
             "size": 1,
+            "source": "oracle",
             "oracleMs": 28496
         },
         "65k siblings, count(preceding-sibling)": {
-            "digest": null,
-            "size": null,
+            "digest": "fe94b827f045",
+            "size": 1,
+            "source": "reference",
             "oracleMs": null
         },
         "8k siblings, position() = last()": {
             "digest": "59bbbe79aad8",
             "size": 1,
+            "source": "oracle",
             "oracleMs": 370
         },
         "union of 3 sets, 14k each": {
             "digest": "e2f2a6af885f",
             "size": 43689,
+            "source": "oracle",
             "oracleMs": 12623
         },
         "union elements + attributes": {
             "digest": "e2c79b57a52e",
             "size": 58253,
+            "source": "oracle",
             "oracleMs": 17332
         },
         "union of the same 65k set twice": {
             "digest": "f903d3cacefd",
             "size": 65534,
+            "source": "oracle",
             "oracleMs": 34627
         },
         "8k siblings, following of all": {
             "digest": "aa7355a7696b",
             "size": 8189,
+            "source": "oracle",
             "oracleMs": 60862
         },
         "8k siblings, preceding of all": {
             "digest": "462dec17208a",
             "size": 8190,
+            "source": "oracle",
             "oracleMs": 39426
         },
         "6k elements, each its own namespace": {
             "digest": "568f15e9fe7b",
             "size": 1,
+            "source": "oracle",
             "oracleMs": 207
         },
         "root with 3,000 namespace declarations, 20k children": {
             "digest": "c9f3f0438221",
             "size": 23000,
+            "source": "oracle",
             "oracleMs": 2875
         },
         "samlify assertion-signature path, 7k <Assertion><Signature/></Assertion>": {
             "digest": "fe8416a6c5c2",
             "size": 7489,
+            "source": "oracle",
             "oracleMs": 652
         },
         "samlify wrapping check, 9k nested <Assertion/> in SubjectConfirmationData": {
             "digest": "d5f17a7c963a",
             "size": 14970,
+            "source": "oracle",
             "oracleMs": 1008
+        },
+        "resolver: 20k <a:x><a:y/><a:y/></a:x>, string(a:y) predicate": {
+            "digest": "4f53cda18c2b",
+            "size": 0,
+            "source": "oracle",
+            "oracleMs": 2494
+        },
+        "resolver: 20k <a:x><a:y/><a:y/></a:x>, all selected by a positional predicate": {
+            "digest": "55af83b97397",
+            "size": 20000,
+            "source": "oracle",
+            "oracleMs": 4799
+        },
+        "id(): 10,000 tokens that exist, 50k elements": {
+            "digest": "5adc9ed7bf87",
+            "size": 10000,
+            "source": "oracle",
+            "oracleMs": 9539
+        },
+        "id(): 10,000 tokens that do not exist, 50k elements": {
+            "digest": "4f53cda18c2b",
+            "size": 0,
+            "source": "oracle",
+            "oracleMs": 63332
+        },
+        "id(): 40,000 tokens (more than id() takes), 50k elements": {
+            "digest": "0f8568695787",
+            "size": 40000,
+            "source": "oracle",
+            "oracleMs": 116188
+        },
+        "id(node-set): the text of 5,000 elements": {
+            "digest": "bd730884c9ce",
+            "size": 5000,
+            "source": "oracle",
+            "oracleMs": 1330
+        },
+        "id(node-set): a chain 5,000 deep (every serialisation holds the chain below it)": {
+            "digest": "4f53cda18c2b",
+            "size": 0,
+            "source": "oracle",
+            "oracleMs": 3493
+        },
+        "namespace axis: 4,000 nested elements, a new prefix at every level (8 million nodes)": {
+            "digest": "e3a9d0a72d0e",
+            "size": 1,
+            "source": "reference",
+            "oracleMs": null
+        },
+        "nested predicates //a[//a[//a[//a]]], 3,000 <a><b/></a>": {
+            "digest": "4d6af5fccf3d",
+            "size": 3000,
+            "source": "reference",
+            "oracleMs": null
+        },
+        "nested predicates with count(), 3,000 <a><b/></a>": {
+            "digest": "98d1b492ede7",
+            "size": 6001,
+            "source": "reference",
+            "oracleMs": null
+        },
+        "preceding::a[1] from every one of 3,000 <a><b/></a>": {
+            "digest": "5129593bf1d1",
+            "size": 2999,
+            "source": "oracle",
+            "oracleMs": 39244
+        },
+        "50k siblings, preceding-sibling::a[last()]": {
+            "digest": "038966de9f6b",
+            "size": 1,
+            "source": "reference",
+            "oracleMs": null
+        },
+        "a union of 1,500 operands over 2,000 elements": {
+            "digest": "f15f7e067532",
+            "size": 1500,
+            "source": "oracle",
+            "oracleMs": 228
+        },
+        "a union of 20,000 operands over 2,000 elements (40 million units: more than the budget)": {
+            "digest": "9e23c32ddb53",
+            "size": 2000,
+            "source": "reference",
+            "oracleMs": null
+        },
+        "strings: contains() of a 1M-character attribute and a 500k-character one that is not in it": {
+            "digest": "55a7dd3fe08b",
+            "size": 1,
+            "source": "oracle",
+            "oracleMs": 1
+        },
+        "strings: concat() doubling a 1M-character string eight times (256 million characters)": {
+            "digest": "dfe6df3ab43f",
+            "size": 1,
+            "source": "oracle",
+            "oracleMs": 2
+        },
+        "strings: translate() and normalize-space() of a 1M-character attribute": {
+            "digest": "410001c8f5c1",
+            "size": 1,
+            "source": "oracle",
+            "oracleMs": 20
         }
     }
 }

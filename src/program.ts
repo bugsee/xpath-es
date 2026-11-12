@@ -3,15 +3,67 @@
 import type { Expr } from './ast.ts';
 import { compile, expressionFacts, NO_NODE } from './compile.ts';
 import type { ExpressionFacts } from './compile.ts';
-import { ATTRIBUTE_NODE, DOCUMENT_NODE, ELEMENT_NODE, XML_NAMESPACE_URI, XMLNS_NAMESPACE_URI } from './dom.ts';
-import type { DomNode } from './dom.ts';
-import { XPathContextError } from './errors.ts';
+import {
+    ATTRIBUTE_NODE,
+    DOCUMENT_NODE,
+    ELEMENT_NODE,
+    isDomNodeArray,
+    XML_NAMESPACE_URI,
+    XMLNS_NAMESPACE_URI
+} from './dom.ts';
+import type { DomNode, NamespaceLookup } from './dom.ts';
+import { XPathContextError, XPathTypeError } from './errors.ts';
 import { DEFAULT_PARSE_LIMITS, parseXPath } from './parser.ts';
 import type { ParseLimits } from './parser.ts';
-import { EvalState } from './runtime.ts';
-import type { Compiled, FunctionLookup, NamespaceLookup, VariableLookup, XValue } from './runtime.ts';
+import { EvalState, NodeSet } from './runtime.ts';
+import type { Compiled, CustomFunction, FunctionLookup, VariableLookup, XValue } from './runtime.ts';
+
+/** A value of the XPath 1.0 data model as the typed API hands it over: a node-set is an array in document order. */
+export type XPathValue = string | number | boolean | readonly DomNode[];
+
+/** The dynamic context of a custom function call (section 1): the context node, its position and the size. */
+export interface FunctionContext {
+    readonly node: DomNode;
+    readonly position: number;
+    readonly size: number;
+}
+
+/** A custom function: the arguments arrive as XPath values; the answer is an XPath value. */
+export type XPathFunctionImplementation = (context: FunctionContext, ...args: XPathValue[]) => XPathValue;
+
+/** What an evaluation of the typed API reports. */
+export interface Evaluation {
+    readonly value: XPathValue;
+    /** The work the evaluation took, in the units the budget counts (a measure, for choosing limits). */
+    readonly work: number;
+}
 
 export interface EvaluateOptions {
+    /** Context node; omitted means "none" (an expression that needs one then fails). */
+    readonly node?: DomNode | null | undefined;
+    readonly position?: number | undefined;
+    readonly size?: number | undefined;
+    /** Prefix lookup. It is asked at every name test and must not change the document. */
+    readonly namespaces?: NamespaceLookup | undefined;
+    /** Variables: asked for each `$name`; null/undefined means undeclared. May run caller code that changes the document. */
+    readonly variables?: ((localName: string, namespace: string) => XPathValue | null | undefined) | undefined;
+    /** Custom functions, asked for each function call before the core library; may change the document. */
+    readonly functions?:
+        | ((localName: string, namespace: string) => XPathFunctionImplementation | null | undefined)
+        | undefined;
+    readonly caseInsensitive?: boolean | undefined;
+    readonly allowAnyNamespaceForNoPrefix?: boolean | undefined;
+    /**
+     * Work allowed, in units (node visits, and characters scanned in sixteenths): the evaluation throws XPathBudgetError
+     * when it is exhausted. Omitted means DEFAULT_BUDGET; 0 means no limit. Anything but a number of at least 0 is refused.
+     */
+    readonly budget?: number | undefined;
+    /** Wall-clock milliseconds allowed: XPathTimeoutError when exceeded. Omitted means DEFAULT_TIMEOUT_MS; 0 means none. */
+    readonly timeoutMs?: number | undefined;
+}
+
+/** @internal The options the engine itself takes (the compat entry and the tests): the lookups work on engine values. */
+export interface RawEvaluateOptions {
     /** Context node; omitted means "none" (an expression that needs one then fails). */
     readonly node?: DomNode | null | undefined;
     readonly position?: number | undefined;
@@ -85,19 +137,59 @@ export interface ProgramOptions {
     readonly mode?: XPathMode | undefined;
 }
 
+/** What a variable or function of the typed API may hand back, as an engine value; null when there is none. */
+function toEngineValue(value: unknown): XValue | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+    if (Array.isArray(value) && isDomNodeArray(value)) return new NodeSet([...new Set(value)], false);
+    throw new XPathTypeError('A variable or function produced a value that is neither an XPath value nor DOM nodes');
+}
+
+function toPublicValue(value: XValue, state: EvalState): XPathValue {
+    return value instanceof NodeSet ? [...value.sorted(state)] : value;
+}
+
+function adaptVariables(
+    lookup: (localName: string, namespace: string) => XPathValue | null | undefined
+): VariableLookup {
+    return (localName, namespace) => toEngineValue(lookup(localName, namespace));
+}
+
+function adaptFunctions(
+    lookup: (localName: string, namespace: string) => XPathFunctionImplementation | null | undefined
+): FunctionLookup {
+    return (localName, namespace) => {
+        const implementation = lookup(localName, namespace);
+        if (implementation == null) return null;
+        const custom: CustomFunction = (focus, state, args) => {
+            const result = toEngineValue(
+                implementation(
+                    { node: focus.node, position: focus.position, size: focus.size },
+                    ...args.map((arg) => toPublicValue(arg, state))
+                )
+            );
+            if (result === null) throw new XPathTypeError(`Function ${localName} returned no value`);
+            return result;
+        };
+        return custom;
+    };
+}
+
 const isPositiveInteger = (value: number): boolean => value >= 1 && Math.floor(value) === value;
 
 export class XPathProgram {
     /**
-     * Test switch: treat every evaluation as impure, so that no fast path, no kept numbering and no order bit is
-     * used. The differential suites run once with it off and once with it on (SLOW=1); both must equal upstream.
+     * @internal Test switch: treat every evaluation as impure, so that no fast path, no kept numbering and no order bit is
+     * used. The differential suites run on `test/support/candidate-slow.ts`, which sets it; both must equal upstream.
      */
     static forceSlowPath = false;
 
     readonly source: string;
     /** `upstream`: the behaviour of xpath 0.0.36, quirks included (the default). `strict`: XPath 1.0 as specified. */
     readonly mode: XPathMode;
+    /** @internal */
     readonly ast: Expr;
+    /** @internal */
     readonly facts: ExpressionFacts;
     readonly #run: Compiled;
 
@@ -109,8 +201,22 @@ export class XPathProgram {
         this.#run = compile(this.ast);
     }
 
-    /** Evaluates and returns the raw value together with the state (needed to put a node-set in document order). */
-    run(options: EvaluateOptions = {}): { readonly value: XValue; readonly state: EvalState } {
+    /**
+     * Evaluates the expression: the value (a node-set as an array in document order) and the work it took. Throws an
+     * `XPathError` (syntax errors are thrown by the constructor): a typed budget, time or limit error when a limit is
+     * reached.
+     */
+    run(options: EvaluateOptions = {}): Evaluation {
+        const { value, state } = this.runRaw({
+            ...options,
+            variables: options.variables === undefined ? undefined : adaptVariables(options.variables),
+            functions: options.functions === undefined ? undefined : adaptFunctions(options.functions)
+        });
+        return { value: value instanceof NodeSet ? [...value.sorted(state)] : value, work: state.work };
+    }
+
+    /** @internal Evaluates and returns the engine's value together with the state (to put a node-set in order). */
+    runRaw(options: RawEvaluateOptions = {}): { readonly value: XValue; readonly state: EvalState } {
         const node = options.node ?? NO_NODE;
         const size = options.size ?? 1;
         const position = options.position ?? 1;

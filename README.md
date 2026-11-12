@@ -57,11 +57,90 @@ Why the other DOMs do not gate: upstream delegates ordering to the DOM there and
 `compareDocumentPosition` is not a document order, happy-dom and jsdom misorder or drop attributes). The engine
 returns true document order, and throws `XPathOrderError` for node-sets of several trees.
 
-Other deliberate differences:
+Other deliberate differences from upstream, in the default mode:
 
-- Error *messages* differ where upstream throws an accidental `TypeError`; the engine throws typed errors.
-- Every evaluation has a work budget (`DEFAULT_BUDGET`) and a time limit (`DEFAULT_TIMEOUT_MS`); both can be changed
-  per evaluation (`budget`, `timeoutMs`; `0` turns one off).
+- Error *messages* differ where upstream throws an accidental `TypeError` or `ReferenceError`; the engine throws typed
+  errors, and the fuzzers compare the *category* of two errors (syntax, unresolvable name, type, no document order,
+  limit), not the text.
+- **Class 6, the limits.** The engine stops an evaluation at its default work budget or time limit (below); upstream
+  would have gone on. When that is the only difference, the fuzzers re-run the engine with the limits off and require
+  upstream's answer exactly (`test/support/classify.ts`, `isLimitPolicy`). The expressions this happens to are
+  quadratic or worse on a document with a parent of thousands of children.
+- Plain-object resolver maps (`namespaces`, `functions`, `variables`) are read by own property only: a prefix called
+  `constructor`, or a function called `toString`, is not a member of `Object.prototype`.
+- A namespace resolver (a function) is asked at every name test, as upstream asks it, but it must not change the
+  document. Custom functions and variable resolvers may: the engine drops the numbering and the sibling ranks it made
+  when one has run, and orders a handful of nodes locally in the meantime (`FEW_NODES` in `src/order.ts`).
+- Document-only subexpressions (no context node, no position, no variable, no function the engine does not know) are
+  evaluated once per document: `//a[//b[//c]]` computes `//b[//c]` once, not once per `a`.
+
+## Modes: upstream and strict
+
+`new XPathProgram(source, { mode })`, `select(expression, node, false, { mode })`, `parse(expression, { mode })` and the
+`mode` option of the evaluator take `'upstream'` (the default) or `'strict'`.
+
+- **`upstream`** is the adoption gate: the node-sets and the values existing consumers (samlify, xml-crypto,
+  xml-encryption) have always seen from `xpath` 0.0.36, quirks included.
+- **`strict`** is XPath 1.0 as the Recommendation (16 November 1999) specifies it. Its answers are checked against the
+  text of the Recommendation (`test/unit/strict-spec.test.ts`), never against upstream, and `test/mode-agreement.ts`
+  checks that on every random expression that uses none of the deviating features the two modes agree, so strict mode
+  does not regress where upstream is right.
+
+### Known deviations from XPath 1.0 inherited from upstream (default mode)
+
+Each one is pinned in both modes in `test/unit/modes.test.ts`.
+
+| | `upstream` mode (default) | `strict` mode |
+|---|---|---|
+| `following::` (2.2) | includes the context node's descendants and, when it has children, leaves out its following siblings; `/r/a[1]/following::e` finds nothing | not the descendants; the following siblings of the node and of each ancestor with their subtrees (for an attribute or namespace node, its element's children too) |
+| `preceding::` (2.2) | includes the ancestors and the document node | excludes ancestors; an attribute or namespace node stands where its element stands |
+| `id()` (4.1) | asks the DOM's `getElementById` for each token (a node-set argument is joined as the nodes' serialisations: `id(//@ref)` names nothing) | the tokens of each node's string-value; at most one element per distinct token, the first in document order, from one index per evaluation |
+| name tests (2.3) | case-insensitive wherever the DOM answers `implementation.hasFeature('HTML', '2.0')` with true, which xmldom, jsdom and browsers do for every document: `//E` finds `<e/>` in an XML document | case-sensitive in an XML document; case-insensitive in an HTML document (`contentType` `text/html`) |
+| `@*`, `attribute::*` (5.3) | include `xmlns` / `xmlns:p` declarations | namespace declarations are not attributes |
+| `lang()` (4.3) | the context node's own `xml:lang` on a DOM that answers `''` for a missing attribute (xmldom), the ancestors' otherwise; case-sensitive | the nearest ancestor-or-self `xml:lang`, ignoring case, with `-` sublanguages |
+| `number()` of a node-set (4.4) | through JavaScript's `Number()`: an empty node-set is 0, `0x10` is 16 | the string-value of the first node, converted by the grammar: an empty node-set is NaN |
+| string to number (4.4) | `1.` is NaN; JavaScript's white space and `Infinity` words are not accepted | the grammar of 4.4: `1.` and `.5` are numbers, `+1`, `1e3`, `0x10`, a lone `.` are NaN; only space, tab, CR and LF around it |
+| number to string (4.2) | small numbers are written by padding digits and the sign goes wrong: `string(-0.00000001)` is `0.0000000-1` | no exponent, the sign kept: `-0.00000001`; both zeros print `0` |
+| `substring()` (4.2) | JavaScript's `substring()` on rounded bounds: reversed bounds swap, NaN is 0: `substring("12345", 3, -1)` is `2`, `substring("12345", 0 div 0)` is `12345` | positions `round(start)` up to `round(start) + round(length)`, NaN gives the empty string, infinities clamp |
+| `string-length()`, `substring()` (4.2) | UTF-16 code units | characters |
+| namespace axis (5.4) | each evaluation makes new node objects, so a context reached twice yields a namespace node twice (class 5); `xmlns=""` makes a node; a namespace node has no parent | one node per element and prefix, held once; no node for `xmlns=""`; the parent is the element |
+| axis names, NUL (3.7) | an unknown axis name selects nothing (`foo::bar` is `[]`); a NUL ends the expression | a syntax error |
+| an unresolvable prefix (2.3) | an error only when a node test meets a node: `//e[count(following-sibling::p:x)=0]` is fine when `e` has no following sibling | an error whenever the expression is evaluated |
+
+**`id()` cannot detect duplicate IDs in either mode.** When two elements have the same ID, `id()` answers the first in
+the order the DOM looks up (document order for the DOMs tested); the Recommendation leaves duplicates undefined, and
+Blink, WebKit and Gecko answer the first as well. The ID attributes are `id` and, in strict mode, `xml:id`.
+
+## Limits
+
+Every evaluation has a work budget and a time limit, so that an expression on a hostile document stops with a typed
+error (`XPathBudgetError`, code `BUDGET`; `XPathTimeoutError`, code `TIMEOUT`; `XPathLimitError`, code `LIMIT`) instead
+of running for minutes. A *unit* is a node visited, a node-set member sorted, or (for string functions) sixteen
+characters scanned.
+
+| | default | measured |
+|---|---|---|
+| `DEFAULT_BUDGET` | 5,000,000 units | the most one evaluation of a signed SAML login response took was **8,004** units, for a response with a 2,000-value group list (4 units per value, under 1 ms); the hostile documents of the gate (256 KiB each) take at most **328,000** units (18 ms). The default is 600 times the first and 15 times the second, and a hostile expression is stopped after at most 5,000,000 units, a few hundred milliseconds |
+| `DEFAULT_TIMEOUT_MS` | 1,000 ms | the backstop for work the units do not model; it is read every 4,096 units |
+| namespace nodes | 262,144 per evaluation | a document nested 8,000 levels deep with a new prefix at every level made 32 million nodes (4 GB) before |
+| `id()` | 10,000 distinct tokens per call | 40,000 tokens took 39 s before |
+| strings | 16,777,216 characters per string | nested `concat()` doubled a string per level |
+
+They apply to every entry: `XPathProgram.run`, `select`, `select1`, `selectWithResolver`, `useNamespaces` (as
+`{ budget, timeoutMs }`, also as defaults: `useNamespaces(map, { budget })`) and the evaluator object. `0` turns a limit
+off, `Infinity` works as well; anything that is not a number of at least 0 (a string such as `'0'`, `NaN`, `null`, a
+negative number) is refused with `XPathContextError`, because it would otherwise turn the limit off silently.
+`bench/limits.ts` prints the measurements. A caller whose legitimate documents are larger raises the limits.
+
+The parse cache of the compat entry is a byte-bounded LRU (256 Ki characters of source in all, 512 programs) and does
+not keep an expression longer than 2,048 characters.
+
+## Errors
+
+Errors are typed (`XPathError` and its subclasses, each with a stable `code`). The package ships as ES modules and as
+CommonJS, so a program that loads both has two copies of the classes and `instanceof` fails across them. Use
+`isXPathError(value)`, which recognises an error from either copy (by a brand registered with `Symbol.for`), and the
+`code` property, which is the same string in both.
 
 ## Running it
 
@@ -170,6 +249,8 @@ learns from. `xpath` was originally written by **Cameron McCormack** (copyright 
 with contributions from **Yaron Naveh**, **goto100**, **Thomas Weinert**, **Jimmy Rishe** and
 [others](https://github.com/goto100/xpath/graphs/contributors). Thank you.
 
+- Design ideas (lazy sort flags, context-sensitivity analysis, reverse-axis storage, predicate merging) were studied in
+  the XPath implementations of WebKit, Blink and Gecko; no code from those projects is included.
 - W3C, *XML Path Language (XPath) Version 1.0*, W3C Recommendation, 16 November 1999:
   <https://www.w3.org/TR/1999/REC-xpath-19991116/>
 - `xpath` 0.0.36, the oracle (dev dependency): <https://github.com/goto100/xpath>, MIT.

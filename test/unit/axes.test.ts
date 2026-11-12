@@ -15,7 +15,7 @@ void test('preceding:: from the last context does not evaluate predicates on the
     assert.ok(context);
     const program = new XPathProgram("preceding::processing-instruction()[lang('text1')]");
     const { value } = program.run({ node: context });
-    assert.equal(typeof value === 'object' ? value.size : -1, 0);
+    assert.equal(Array.isArray(value) ? value.length : -1, 0);
 });
 
 void test('preceding:: still evaluates predicates on a context that precedes a later context', () => {
@@ -23,5 +23,5 @@ void test('preceding:: still evaluates predicates on a context that precedes a l
     const program = new XPathProgram('preceding::*[name() = "a"]');
     const nodes = allNodes(doc).filter((node) => node.nodeType === 1);
     const { value } = program.run({ node: nodes[nodes.length - 1] });
-    assert.equal(typeof value === 'object' ? value.size : -1, 1);
+    assert.equal(Array.isArray(value) ? value.length : -1, 1);
 });

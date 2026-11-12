@@ -9,7 +9,9 @@ import {
     TEXT_NODE
 } from './dom.ts';
 import { NamespaceNode } from './dom.ts';
-import type { DomNode } from './dom.ts';
+import type { DomNode, NamespaceLookup } from './dom.ts';
+
+export type { NamespaceLookup };
 import { XPathBudgetError, XPathLimitError, XPathOrderError, XPathResolveError, XPathTimeoutError } from './errors.ts';
 import { now } from './clock.ts';
 import { FEW_NODES, Numbering, sortFew } from './order.ts';
@@ -66,12 +68,6 @@ export interface Focus {
 
 export type Compiled = (focus: Focus, state: EvalState) => XValue;
 
-/** A prefix resolver. `charge` accounts for the work of a lookup that walks the document (see EvalState.charge). */
-export type NamespaceLookup = (
-    prefix: string,
-    node: DomNode,
-    charge?: (units: number) => void
-) => string | null | undefined;
 export type VariableLookup = (localName: string, namespace: string) => XValue | null | undefined;
 export type CustomFunction = (focus: Focus, state: EvalState, args: readonly XValue[]) => XValue;
 export type FunctionLookup = (localName: string, namespace: string) => CustomFunction | null | undefined;

@@ -3,6 +3,18 @@
 
 export type XPathErrorCode = 'SYNTAX' | 'TYPE' | 'RESOLVE' | 'ORDER' | 'LIMIT' | 'BUDGET' | 'TIMEOUT' | 'CONTEXT';
 
+/**
+ * The package is built twice, as ES modules and as CommonJS, so a program that loads both has two copies of these
+ * classes and `instanceof` is false across them. Every error carries a brand under a registered symbol, which both copies
+ * share, and `isXPathError` tests for it; `code` is the same string in both.
+ */
+const BRAND: symbol = Symbol.for('xpath-es.XPathError');
+
+/** Is the value an error of this package, from either build (ES module or CommonJS)? */
+export function isXPathError(value: unknown): value is XPathError {
+    return value instanceof Error && Reflect.get(value, BRAND) === true;
+}
+
 export class XPathError extends Error {
     readonly code: XPathErrorCode;
 
@@ -10,6 +22,7 @@ export class XPathError extends Error {
         super(message);
         this.name = new.target.name;
         this.code = code;
+        Reflect.defineProperty(this, BRAND, { value: true });
     }
 }
 

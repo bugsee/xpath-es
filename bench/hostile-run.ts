@@ -17,6 +17,8 @@ export interface Measurement {
     readonly digest: string;
     /** Set when the engine threw: the digest then hashes the error text, which no correct engine shares. */
     readonly error: string | null;
+    /** The `code` of a typed engine error (LIMIT, BUDGET, TIMEOUT, ...), null for any other failure. */
+    readonly errorCode: string | null;
 }
 
 export function isMeasurement(value: unknown): value is Measurement {
@@ -34,18 +36,31 @@ export function measureOne(engine: EngineName, at: number): Measurement {
     const item = CASES[at];
     if (item === undefined) throw new Error(`no case ${at}`);
     const doc = loadDom('xmldom08')(item.xml());
-    const select = loadEngine(engine);
+    const select =
+        engine === 'reference'
+            ? (): unknown => {
+                  if (item.reference === undefined) throw new Error(`case ${at} has no reference answer`);
+                  return item.reference(doc);
+              }
+            : (
+                  (load) => (): unknown =>
+                      load(item.expression, doc, item.namespaces)
+              )(loadEngine(engine));
     const times: number[] = [];
     let result: unknown;
     let error: string | null = null;
+    let errorCode: string | null = null;
     const once = (): void => {
         times.push(
             milliseconds(() => {
                 try {
-                    result = select(item.expression, doc);
+                    result = select();
                 } catch (thrown) {
                     error = errorText(thrown);
                     result = `ERR ${error}`;
+                    const code: unknown =
+                        typeof thrown === 'object' && thrown !== null ? Reflect.get(thrown, 'code') : null;
+                    errorCode = typeof code === 'string' ? code : null;
                 }
             })
         );
@@ -61,7 +76,8 @@ export function measureOne(engine: EngineName, at: number): Measurement {
         runs: times.length,
         size: Array.isArray(result) ? result.length : 1,
         digest: createHash('sha256').update(text).digest('hex').slice(0, 12),
-        error
+        error,
+        errorCode
     };
 }
 

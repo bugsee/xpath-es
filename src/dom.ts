@@ -20,6 +20,17 @@ export const DOCUMENT_FRAGMENT_NODE = 11;
 /** `nodeType` of the synthetic namespace nodes (same number upstream uses). */
 export const NAMESPACE_NODE = 13;
 
+/**
+ * A prefix resolver: the namespace URI a prefix stands for at `node`, or null/undefined when it stands for none.
+ * `charge` accounts for the work of a lookup that walks the document (the engine passes it; a caller's own resolver
+ * ignores it).
+ */
+export type NamespaceLookup = (
+    prefix: string,
+    node: DomNode,
+    charge?: (units: number) => void
+) => string | null | undefined;
+
 export const XML_NAMESPACE_URI = 'http://www.w3.org/XML/1998/namespace';
 export const XMLNS_NAMESPACE_URI = 'http://www.w3.org/2000/xmlns/';
 

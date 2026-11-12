@@ -79,6 +79,15 @@ void test('section 2.2: the axes', () => {
     // following: not the descendants of the context node, but its following siblings and their subtrees.
     assert.equal(ids('following::para', chapter), 'p4 p5');
     assert.equal(ids('following::*', chapter), 'c2 title s1 p4 a1 p5');
+    // The same through the positional (per context node) code path.
+    assert.equal(ids('following::para[1]', chapter), 'p4');
+    assert.equal(ids('following::*[2]', chapter), 'title');
+    assert.equal(ids('following::*[last()]', chapter), 'p5');
+    assert.equal(ids('following::*[position() <= 2]', chapter), 'c2 title');
+    // For an attribute node the element's children follow it, then what follows the element.
+    const typeAttribute = first('//para[@id="p3"]/@type');
+    assert.equal(ids('following::*[1]', typeAttribute), 'c2');
+    assert.equal(ids('following::para[1]', first('//chapter[@id="c2"]/@id')), 'p4');
     // preceding: not the ancestors.
     assert.equal(ids('preceding::*', first('//section')), 'c1 title p1 p2 p3 title');
     assert.equal(ids('preceding::para', first('//appendix')), 'p1 p2 p3 p4');

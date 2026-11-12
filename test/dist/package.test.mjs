@@ -181,3 +181,32 @@ test('npm pack ships the build, the licence and the readme, and nothing else', (
         'a TypeScript source is packed'
     );
 });
+
+test("the public declarations are only the API: nothing of the engine's internals can be reached from the entry", () => {
+    // The declarations the entry reaches, directly or through each other, are the only declaration files shipped.
+    for (const [entry, suffix] of [
+        ['index.d.ts', '.d.ts'],
+        ['index.d.cts', '.d.cts']
+    ]) {
+        const reachable = new Set([entry]);
+        const pending = [entry];
+        for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+            for (const [, name] of read(file).matchAll(/from\s+['"]\.\/([^'"]+)\.c?js['"]/g)) {
+                const next = `${name}${suffix}`;
+                if (!reachable.has(next)) {
+                    reachable.add(next);
+                    pending.push(next);
+                }
+            }
+        }
+        const shipped = files.filter((name) => name.endsWith(suffix));
+        assert.deepEqual(
+            [...shipped].sort(),
+            [...reachable].sort(),
+            `${suffix} files that are not reachable from ${entry}`
+        );
+        const internals =
+            /\b(EvalState|NodeSet|Numbering|Focus|Compiled|forceSlowPath|RawEvaluateOptions|runRaw|userCodeRan|siteCaches|elementsById|sortFew|FEW_NODES)\b/;
+        for (const name of reachable) assert.doesNotMatch(read(name), internals, `${name} exposes an engine internal`);
+    }
+});

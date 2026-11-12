@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { call, loadDom } from '../harness.ts';
 import { parse, select, useNamespaces, XPathBudgetError } from '../support/engine.ts';
+import type { DomNode } from '../../src/dom.ts';
 
 const parseXml = loadDom('xmldom08');
 const N = 3000;
@@ -51,21 +52,29 @@ void test('a custom function (which may change the document) does not make a sor
     assert.equal(calls, N);
 });
 
-void test('a custom function that changes the document is still seen by the next sort', () => {
-    const small = parseXml('<r><a/><b/><c/></r>');
-    const r = small.documentElement;
+void test('a custom function that changes the document is still seen by the next sort (more nodes than a local sort takes)', () => {
+    // 41 nodes are more than sortFew orders locally, so the numbering of the whole tree is what a stale answer would come
+    // from: the function moves the first element to the end while the evaluation holds a numbering made before.
+    const crowded = parseXml(`<r>${'<a/>'.repeat(40)}<b/></r>`);
+    const r = crowded.documentElement;
     assert.ok(r);
-    const found = parse('(//c | //a)[f()]/following-sibling::*').select({
-        node: small,
+    let calls = 0;
+    const found = parse('(//a | //b)[f()]').select({
+        node: crowded,
         functions: {
             f: () => {
-                const first = r.firstChild;
-                if (first !== null && first !== undefined) call(r, 'appendChild', first);
+                if (++calls === 1 && r.firstChild != null) call(r, 'appendChild', r.firstChild);
                 return true;
             }
         }
     });
-    assert.ok(Array.isArray(found));
+    const inDocumentOrder: DomNode[] = [];
+    for (let child = r.firstChild; child != null; child = child.nextSibling) inDocumentOrder.push(child);
+    assert.equal(found.length, 41);
+    assert.ok(
+        found.every((node, i) => node === inDocumentOrder[i]),
+        'the result is not in the order of the document as it now is'
+    );
 });
 
 void test('a small budget still stops a resolver evaluation with the typed error', () => {

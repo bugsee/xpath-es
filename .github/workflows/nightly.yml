@@ -27,12 +27,12 @@ jobs:
       CANDIDATE: ${{ matrix.candidate }}
       CLASSIFY: ${{ matrix.classify }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Random documents, all scenarios, whole corpus
         run: |
           seed="$(date +%Y%m%d)"
@@ -56,12 +56,12 @@ jobs:
       CANDIDATE: ./src/index.ts
       TOLERATE: result,mixed,order
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Random documents, all scenarios, whole corpus (report)
         run: |
           seed="$(date +%Y%m%d)"
@@ -76,23 +76,23 @@ jobs:
   fork:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: node test/fuzz.ts xmldom08 2000 "$(date +%Y%m%d)" all
 
   hostile-and-e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: node test/mutation.ts
       - run: CANDIDATE=./src/index.ts HOSTILE_STRICT=1 node test/hostile.ts
       - run: npm run test:hostile

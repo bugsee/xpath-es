@@ -45,7 +45,7 @@ check('namespaces', () => {
     equal(xpath.useNamespaces({ p: 'urn:a' })('//p:x', doc).length, 1);
     equal(xpath.select('//*[local-name() = "x" and namespace-uri() = "urn:a"]', doc).length, 1);
     // The typed API resolves a prefix from the document itself.
-    equal(new xpath.XPathProgram('//a:x').run({ node: doc }).value.size, 1);
+    equal(new xpath.XPathProgram('//a:x').run({ node: doc }).value.length, 1);
     // A prefix with no resolver is an error, as in upstream.
     let unresolved = null;
     try {

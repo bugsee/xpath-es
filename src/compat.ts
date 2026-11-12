@@ -5,7 +5,6 @@
 // Typing note: upstream's declarations use lib.dom's `Node`. This entry uses the structural `DomNode`, which every
 // `Node` is assignable to; results come back as `DomNode` and the `is*` guards narrow them.
 
-import { NO_NODE } from './compile.ts';
 import {
     ATTRIBUTE_NODE,
     CDATA_SECTION_NODE,
@@ -23,7 +22,7 @@ import { XPathContextError, XPathError, XPathSyntaxError, XPathTypeError } from 
 import { sortInDocumentOrder } from './order.ts';
 import { lookupNamespaceInDom, XPathProgram } from './program.ts';
 import type { XPathMode } from './program.ts';
-import type { EvaluateOptions } from './program.ts';
+import type { RawEvaluateOptions } from './program.ts';
 import { NodeSet, numberToString, stringToNumber, stringValueOf } from './runtime.ts';
 import type { CustomFunction, EvalState, FunctionLookup, NamespaceLookup, VariableLookup, XValue } from './runtime.ts';
 
@@ -274,7 +273,7 @@ function runSelect(
     const program = programFor(expression, options?.mode);
     const contextNode = contextNodeOf(node);
     const namespaces: NamespaceLookup = resolver == null ? () => null : (prefix) => resolver.lookupNamespaceURI(prefix);
-    return program.run({
+    return program.runRaw({
         node: contextNode,
         namespaces,
         caseInsensitive: program.mode === 'strict' ? isHtmlDocument(contextNode) : detectHtmlDom(contextNode),
@@ -422,6 +421,8 @@ export interface XPathEvaluateOptions {
     budget?: number | undefined;
     /** xpath-es extension (not in upstream): wall-clock limit in milliseconds, see EvaluateOptions.timeoutMs. */
     timeoutMs?: number | undefined;
+    /** xpath-es extension (not in upstream): `strict` XPath 1.0 for this evaluation; the default is `upstream`. */
+    mode?: XPathMode | undefined;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -455,7 +456,7 @@ function lookupFrom(
     return null;
 }
 
-function toEngineOptions(options: XPathEvaluateOptions | undefined): EvaluateOptions {
+function toEngineOptions(options: XPathEvaluateOptions | undefined): RawEvaluateOptions {
     if (options === undefined) return {};
     const namespaces = lookupFrom(options.namespaces, 'getNamespace');
     const variables = lookupFrom(options.variables, 'getVariable');
@@ -509,8 +510,16 @@ export class XPathEvaluator {
         this.#program = program;
     }
 
+    /** The program for the mode an evaluation asks for (the parse cache makes a second program cheap). */
+    #programFor(options: XPathEvaluateOptions | undefined): XPathProgram {
+        const mode = options?.mode;
+        return mode === undefined || mode === this.#program.mode
+            ? this.#program
+            : programFor(this.#program.source, mode);
+    }
+
     evaluate(options?: XPathEvaluateOptions): XPathValueObject {
-        return wrap(this.#program.run(toEngineOptions(options)).value);
+        return wrap(this.#programFor(options).runRaw(toEngineOptions(options)).value);
     }
 
     evaluateNumber(options?: XPathEvaluateOptions): number {
@@ -535,7 +544,7 @@ export class XPathEvaluator {
     }
 
     select(options?: XPathEvaluateOptions): DomNode[] {
-        const { value, state } = this.#program.run(toEngineOptions(options));
+        const { value, state } = this.#programFor(options).runRaw(toEngineOptions(options));
         if (!(value instanceof NodeSet)) throw new XPathTypeError(`Cannot convert ${typeof value} to nodeset`);
         return value.sorted(state).slice();
     }
@@ -653,7 +662,7 @@ export function evaluate(
     }
     const node = contextNodeOf(contextNode);
     const namespaces: NamespaceLookup = resolver == null ? () => null : (prefix) => resolver.lookupNamespaceURI(prefix);
-    const { value } = program.run({ node, namespaces, caseInsensitive: detectHtmlDom(node) });
+    const { value } = program.runRaw({ node, namespaces, caseInsensitive: detectHtmlDom(node) });
     return new XPathResult(wrap(value), type);
 }
 
@@ -674,5 +683,3 @@ export const isComment: (value: unknown) => value is DomNode = ofType(COMMENT_NO
 export const isDocumentNode: (value: unknown) => value is DomNode = ofType(DOCUMENT_NODE);
 export const isDocumentTypeNode: (value: unknown) => value is DomNode = ofType(10);
 export const isDocumentFragment: (value: unknown) => value is DomNode = ofType(DOCUMENT_FRAGMENT_NODE);
-
-export { NO_NODE };

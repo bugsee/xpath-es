@@ -22,8 +22,7 @@ import {
 const parseXml = loadDom('xmldom08');
 
 function work(expression: string, xml: string): number {
-    const { state } = new XPathProgram(expression).run({ node: parseXml(xml) });
-    return state.work;
+    return new XPathProgram(expression).run({ node: parseXml(xml) }).work;
 }
 
 void test('id(): one index per evaluation, tokens bounded (before: 10,000 tokens took 9 s, 10,000 missing ones 42 s)', () => {

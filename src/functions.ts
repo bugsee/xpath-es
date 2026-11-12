@@ -303,8 +303,10 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                     // document; id() does not report it, and browsers do not either).
                     const index = state.elementsById(document);
                     for (const id of tokens) {
-                        const element = index.get(id);
-                        if (element !== undefined) found.add(element);
+                        // The empty token (from a leading separator) is the DOM's own business: xmldom's getElementById('')
+                        // answers the first element, since a missing id attribute reads as ''. Upstream asks the DOM.
+                        const element = id === '' && !state.strict ? document.getElementById('') : index.get(id);
+                        if (element != null) found.add(element);
                     }
                 }
                 return new NodeSet([...found], false);

@@ -25,6 +25,7 @@ const DEVIATING = [
     /\bid\(/,
     /\blang\(/,
     /\b(number|floor|ceiling|round|string|substring|string-length|translate|normalize-space|sum)\(/,
+    /[A-Za-z_][\w.-]*:[A-Za-z_*]/,
     /@\*/,
     /attribute::\*/,
     /namespace::/,
@@ -53,7 +54,9 @@ let differences = 0;
 const shown: string[] = [];
 const corpus = CORPUS.slice();
 for (let d = 0; d < documents; d++) {
-    const xml = documentText(random);
+    // Upstream mode matches names without regard to case, so a document must not hold names that differ only in case (the
+    // generator's `ID` attribute next to its `id`): the case deviation is checked in test/unit/modes.test.ts.
+    const xml = documentText(random).replaceAll(' ID="I1"', '');
     const expressions = [...Array.from({ length: perDocument }, () => nextExpression()), ...corpus.splice(0, 8)];
     for (const expression of expressions) {
         if (!everything && deviates(expression)) {
