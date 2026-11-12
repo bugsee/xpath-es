@@ -30,7 +30,7 @@ const DEVIATING = [
     /namespace::/,
     /[A-Z]/,
     /\b(?!(?:child|descendant|descendant-or-self|parent|ancestor|ancestor-or-self|following-sibling|preceding-sibling|attribute|self)::)[a-z-]+::/,
-    /(?:^|[\s(\[,|=<>!])-\S/,
+    /(?:^|[\s([,|=<>!])-\S/,
     / (\+|-|\*|div|mod) /,
     /(^|[^A-Za-z0-9_.)\]'"])\* /,
     /node\(\)/
