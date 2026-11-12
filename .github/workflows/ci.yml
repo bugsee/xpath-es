@@ -75,7 +75,14 @@ jobs:
       - run: node test/mutation.ts
       - run: CLASSIFY=ns-duplicate node test/fuzz-expr.ts xmldom08 60 100 31 ns 5000
       - run: CLASSIFY=all node test/fuzz-expr.ts xmldom09 60 100 31 ns 5000
-      - run: HOSTILE_STRICT=1 node test/hostile.ts
+      - run: node test/mode-agreement.ts 60 100 31
+      # Cases marked engineOnly (the limits, the resolver and id() paths) run only for the engine; every case has an
+      # oracle digest, and the cases the engine must refuse have to stop with a typed error.
+      - run: HOSTILE_ENGINE_CASES=1 HOSTILE_STRICT=1 node test/hostile.ts
+      # Signature wrapping and other tampering with a signed response through samlify and xml-crypto, upstream against
+      # the engine: the same accept or reject, the same extracted values.
+      - run: npm run fixtures
+      - run: npm run test:wrapping
 
   # The shipped output, not the sources: build once, then judge dist/ the way a consumer runs it.
   build:
@@ -162,3 +169,18 @@ jobs:
           echo "::warning::installing ${{ matrix.browser }} without system packages"
           npx playwright install ${{ matrix.browser }}
       - run: node test/browser/run.mjs ${{ matrix.browser }}
+
+  # The suite is tested too: each mutant is the engine with one deliberately wrong change (the reviewer's planted off-by-one
+  # among them); the checks must fail on every one.
+  mutants:
+    runs-on: ubuntu-latest
+    needs: check
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:mutants

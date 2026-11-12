@@ -99,7 +99,7 @@ Each one is pinned in both modes in `test/unit/modes.test.ts`.
 | `@*`, `attribute::*` (5.3) | include `xmlns` / `xmlns:p` declarations | namespace declarations are not attributes |
 | `lang()` (4.3) | the context node's own `xml:lang` on a DOM that answers `''` for a missing attribute (xmldom), the ancestors' otherwise; case-sensitive | the nearest ancestor-or-self `xml:lang`, ignoring case, with `-` sublanguages |
 | `number()` of a node-set (4.4) | through JavaScript's `Number()`: an empty node-set is 0, `0x10` is 16 | the string-value of the first node, converted by the grammar: an empty node-set is NaN |
-| string to number (4.4) | `1.` is NaN; JavaScript's white space and `Infinity` words are not accepted | the grammar of 4.4: `1.` and `.5` are numbers, `+1`, `1e3`, `0x10`, a lone `.` are NaN; only space, tab, CR and LF around it |
+| string to number (4.4) | `1.` is NaN; white space is JavaScript's (a no-break space is trimmed) | the grammar of 4.4: `1.` and `.5` are numbers, `+1`, `1e3`, `0x10`, a lone `.` are NaN; only space, tab, CR and LF around it |
 | number to string (4.2) | small numbers are written by padding digits and the sign goes wrong: `string(-0.00000001)` is `0.0000000-1` | no exponent, the sign kept: `-0.00000001`; both zeros print `0` |
 | `substring()` (4.2) | JavaScript's `substring()` on rounded bounds: reversed bounds swap, NaN is 0: `substring("12345", 3, -1)` is `2`, `substring("12345", 0 div 0)` is `12345` | positions `round(start)` up to `round(start) + round(length)`, NaN gives the empty string, infinities clamp |
 | `string-length()`, `substring()` (4.2) | UTF-16 code units | characters |
