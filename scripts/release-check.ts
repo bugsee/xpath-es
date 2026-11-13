@@ -26,7 +26,10 @@ export function versionOfTag(tag: string): string {
     const version = tag.slice(1);
     const match = SEMVER.exec(version);
     if (match === null) throw new Error(`the tag "${tag}" is not v<major>.<minor>.<patch>[-<prerelease>]`);
-    for (const part of [match[1], match[2], match[3]])
+    // Semantic Versioning: no leading zeros in the three numbers, nor in a prerelease identifier that is all digits
+    // (1.2.3-rc.01 is not a version; npm would read the manifest and publish something else than the tag says).
+    const numbers = [match[1], match[2], match[3], ...(match[4] ?? '').split('.').filter((part) => /^\d+$/.test(part))];
+    for (const part of numbers)
         if (part !== undefined && part.length > 1 && part.startsWith('0'))
             throw new Error(`the tag "${tag}" has a number with a leading zero`);
     return version;

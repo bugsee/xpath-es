@@ -27,7 +27,21 @@ const PACKAGE = { name: 'xpath-es', version: '1.2.3', private: undefined };
 void test('a tag is v<major>.<minor>.<patch>[-<prerelease>] and nothing else', () => {
     assert.equal(versionOfTag('v1.2.3'), '1.2.3');
     assert.equal(versionOfTag('v1.2.3-rc.1'), '1.2.3-rc.1');
-    for (const tag of ['1.2.3', 'v1.2', 'v1.2.3+build', 'v01.2.3', 'v1.2.3-', 'vx', 'v1.2.3 ', 'refs/tags/v1.2.3', ''])
+    assert.equal(versionOfTag('v1.2.3-rc.0'), '1.2.3-rc.0');
+    assert.equal(versionOfTag('v1.2.3-0a'), '1.2.3-0a'); // not all digits: leading zero allowed
+    for (const tag of [
+        '1.2.3',
+        'v1.2',
+        'v1.2.3+build',
+        'v01.2.3',
+        'v1.2.3-01',
+        'v1.2.3-rc.01',
+        'v1.2.3-',
+        'vx',
+        'v1.2.3 ',
+        'refs/tags/v1.2.3',
+        ''
+    ])
         assert.throws(() => versionOfTag(tag), Error, tag);
 });
 

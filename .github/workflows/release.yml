@@ -67,6 +67,7 @@ jobs:
       - run: npm run test:dist
       - name: Pack
         run: |
+          mkdir -p "$RUNNER_TEMP/package"
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/package"
           cd "$RUNNER_TEMP/package"
           sha256sum ./*.tgz | tee SHA256SUMS
