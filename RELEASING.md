@@ -44,26 +44,17 @@ version.
   updates and deletion, so that a published version's tag cannot be moved.
 - **Private vulnerability reporting** on (it is what `SECURITY.md` points to).
 
-## The first release (bootstrapping npm)
+## The first release (bootstrapping npm), done
 
-npm's documentation sets a trusted publisher up from the settings of an existing package, so the very first version cannot
-go through the workflow: an npm owner publishes it by hand, once. That is what `1.0.0-rc.0` is for.
+npm's documentation sets a trusted publisher up from the settings of an existing package, so the very first version could not go
+through the workflow. `1.0.0-rc.0` was published by hand, once, from the tarball of the workflow's `pack` job (checked against
+its `SHA256SUMS`), with `npm publish <tarball> --access public --tag next`, which made the package and had no provenance
+statement. The trusted publisher was configured after that, and `1.0.0-rc.1` was the first release through the workflow. The
+approval of `npm-release` in the run of `v1.0.0-rc.0` was left to fail (the publish job had no package to publish to); nothing
+of that kind is needed again: every release is the steps above.
 
-1. Merge the release pull request and push the tag `v1.0.0-rc.0` as above. The workflow runs `guard`, `ci` and `pack`, then
-   stops at the approval of `npm-release`.
-2. Download the `package` artifact of that run (the tarball and `SHA256SUMS`), check `sha256sum --check SHA256SUMS`, and publish
-   that tarball from your own machine, logged in to npm as an owner:
-
-   ```sh
-   npm publish ./xpath-es-1.0.0-rc.0.tgz --access public --tag next
-   ```
-
-   This publication has **no provenance statement** (it is not made in CI), and it is the only one that goes without. The
-   package has no `provenance` setting of its own, so the command works as it stands.
-3. Reject the pending approval of the workflow run (the version exists now; a second publish would fail), then configure the
-   trusted publisher as above.
-4. The next version (`1.0.0-rc.1`, or `1.0.0`) goes through the workflow, with provenance. If the GitHub release of rc.0 is
-   wanted, create it by hand from the same tarball.
+The trusted publisher's values are: organisation `bugsee`, repository `xpath-es`, workflow `release.yml`, environment
+`npm-release`, and direct `npm publish` allowed.
 
 ## What the package contains
 

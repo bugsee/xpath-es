@@ -5,6 +5,15 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - 2026-11-13
+
+The first release made by the release workflow, through npm trusted publishing, with a provenance statement. There is no
+change to the engine, the API or the documentation of the package since 1.0.0-rc.0.
+
+### Changed
+
+- `RELEASING.md` records how 1.0.0-rc.0 was bootstrapped by hand and that releases now go through the workflow.
+
 ## [1.0.0-rc.0] - 2026-11-13
 
 The first release, a release candidate: it is published under the npm dist-tag `next` (`npm install xpath-es@next`). It is
