@@ -228,7 +228,8 @@ export class EvalState {
                 charged = steps;
             }
         }
-        this.charge(steps - charged + 1);
+        // One step is one visit; a node that is its own root (the usual context, the document) costs nothing.
+        if (steps > charged) this.charge(steps - charged);
         for (const one of passed) this.#roots.set(one, root);
         return root;
     }
