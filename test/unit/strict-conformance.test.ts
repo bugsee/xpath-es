@@ -157,7 +157,8 @@ void test('section 4.2 (C-9): translate() and the substring functions work on ch
     assert.equal(run('translate("\u{1F600}", "\u{1F601}", "x")', doc), JSON.stringify('\u{1F600}'));
     assert.equal(run('translate("a\u{1F600}b", "\u{1F600}", "x")', doc), '"axb"');
     assert.equal(run('translate("a\u{1F600}b", "\u{1F600}b", "")', doc), '"a"');
-    assert.equal(run('substring-before("\u{1F600}", "\\ude00")', doc).length > 0, true);
+    // A lone low surrogate is not found inside a character: nothing precedes it.
+    assert.equal(run('substring-before("a\u{1F600}b", "\uDE00")', doc), '""');
     assert.equal(run('contains("\u{1F600}", "\u{DE00}")', doc), 'false');
     assert.equal(run('substring-after("a\u{1F600}b", "\u{1F600}")', doc), '"b"');
     assert.equal(run('starts-with("\u{1F600}x", "\u{1F600}")', doc), 'true');

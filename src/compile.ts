@@ -8,7 +8,7 @@ import type { DomNode } from './dom.ts';
 import { XPathContextError, XPathResolveError, XPathTypeError } from './errors.ts';
 import { compileCoreFunction, CORE_RETURN_TYPES } from './functions.ts';
 import { NodeSet, toBooleanValue, toNumberValue } from './runtime.ts';
-import type { Compiled, Focus, XValue } from './runtime.ts';
+import type { Compiled, EvalState, Focus, XValue } from './runtime.ts';
 import { applyDescendantPair, applyStep, compileNodeTest, filterByPredicates } from './steps.ts';
 import type { CompiledPredicate, CompiledStep, NodeList } from './steps.ts';
 
@@ -135,6 +135,11 @@ export function documentRoot(node: DomNode, strict = false): DomNode {
     return root;
 }
 
+/** `/` for a context node: the owner document (upstream mode, Q-ROOT) or the root of its tree (strict, charged). */
+function rootOf(node: DomNode, state: EvalState): DomNode {
+    return state.strict ? state.treeRootOf(node) : documentRoot(node);
+}
+
 function compilePath(expr: Extract<Expr, { kind: 'path' }>): Compiled {
     const filter = expr.filter === null ? null : compile(expr.filter);
     const filterPredicates = expr.filterPredicates.map(compilePredicate);
@@ -160,7 +165,7 @@ function compilePath(expr: Extract<Expr, { kind: 'path' }>): Compiled {
                         : 'Context node not found when evaluating XPath step'
                 );
             }
-            list.nodes = [absolute ? documentRoot(focus.node, state.strict) : focus.node];
+            list.nodes = [absolute ? rootOf(focus.node, state) : focus.node];
         } else {
             const value = filter(focus, state);
             if (!(value instanceof NodeSet)) {
@@ -415,7 +420,7 @@ function remembered(run: Compiled): Compiled {
     const site = {};
     return (focus, state) => {
         if (!state.pure || focus.node === NO_NODE) return run(focus, state);
-        const root = documentRoot(focus.node, state.strict);
+        const root = rootOf(focus.node, state);
         const answers = state.answersOf(site);
         const known = answers.get(root);
         if (known !== undefined) return known;
