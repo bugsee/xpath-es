@@ -257,7 +257,7 @@ const NETS: readonly { readonly name: string; readonly command: readonly string[
 
 function mirror(): string {
     const dir = mkdtempSync(path.join(tmpdir(), 'xpath-es-mutant-'));
-    for (const entry of ['src', 'test', 'bench', 'baselines', 'package.json', 'tsconfig.json'])
+    for (const entry of ['src', 'test', 'bench', 'scripts', 'baselines', 'package.json', 'tsconfig.json'])
         cpSync(path.join(root, entry), path.join(dir, entry), { recursive: true });
     symlinkSync(path.join(root, 'node_modules'), path.join(dir, 'node_modules'));
     return dir;
