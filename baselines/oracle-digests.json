@@ -1,6 +1,6 @@
 {
     "oracle": "xpath@0.0.36",
-    "limitMs": 300000,
+    "limitMs": 20000,
     "cases": {
         "65k <a/> siblings": {
             "digest": "6126b8424c7f",
@@ -229,6 +229,36 @@
             "size": 1,
             "source": "oracle",
             "oracleMs": 20
+        },
+        "expression cost: 2,000 predicates [1=1] on //*, 65k elements (130 million evaluations)": {
+            "digest": "6126b8424c7f",
+            "size": 65535,
+            "source": "reference",
+            "oracleMs": null
+        },
+        "expression cost: a 20,000-operand `0 or 0 or ...` evaluated for each of 20k elements": {
+            "digest": "4f53cda18c2b",
+            "size": 0,
+            "source": "reference",
+            "oracleMs": null
+        },
+        "expression cost: a 20,000-term sum `1+1+...=0` evaluated for each of 20k elements": {
+            "digest": "4f53cda18c2b",
+            "size": 0,
+            "source": "reference",
+            "oracleMs": null
+        },
+        "expression cost: 20,000 calls of contains() on short strings for each of 20k elements": {
+            "digest": "4f53cda18c2b",
+            "size": 0,
+            "source": "reference",
+            "oracleMs": null
+        },
+        "id('x') in a predicate over 50k elements (a DOM that walks the document for each call)": {
+            "digest": "4f53cda18c2b",
+            "size": 0,
+            "source": "reference",
+            "oracleMs": null
         }
     }
 }

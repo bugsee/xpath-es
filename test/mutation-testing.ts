@@ -7,7 +7,7 @@
 //   node test/mutation-testing.ts [name-fragment]     exit 1 when a mutant survives (or does not apply)
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -22,6 +22,119 @@ interface Mutant {
 }
 
 const MUTANTS: readonly Mutant[] = [
+    // The planted bugs of the second review (P-numbers are the reviewer's): each passed every gate of the first PR.
+    {
+        name: 'reviewer P1: strict preceding[k] drops an ancestor whose subtree ends exactly at the context',
+        file: 'src/ranked.ts',
+        find: 'if (top < rank && (ends[top] ?? top) >= rank) break;',
+        replace: 'if (top < rank && (ends[top] ?? top) > rank) break;'
+    },
+    {
+        name: 'reviewer P2: strict preceding of a set does not skip the document node as an ancestor',
+        file: 'src/ranked.ts',
+        find: 'for (let up = lastNode?.parentNode; up != null; up = up.parentNode) ancestors.add(up);',
+        replace:
+            'for (let up = lastNode?.parentNode; up != null && up.nodeType !== 9; up = up.parentNode) ancestors.add(up);'
+    },
+    {
+        name: 'reviewer P3: the ordered descendant walk is not charged',
+        file: 'src/steps.ts',
+        find: '                        visits.one();\n                        if (node === input[at]) at++;\n                        if (passesAll(node, step, focus, state)) out.push(node);',
+        replace:
+            '                        if (node === input[at]) at++;\n                        if (passesAll(node, step, focus, state)) out.push(node);'
+    },
+    {
+        name: 'reviewer P3b: the string-value walk is not charged',
+        file: 'src/runtime.ts',
+        find: 'state?.charge(visits - charged + (text.length >> 4));',
+        replace: 'state?.charge(1);'
+    },
+    {
+        name: 'reviewer P5: context-defaulting calls (string(), name(), ...) are taken for document-only and hoisted',
+        file: 'src/compile.ts',
+        find: '                !(CONTEXT_DEFAULTING.has(expr.name) && expr.args.length === 0) &&\n',
+        replace: ''
+    },
+    {
+        name: 'reviewer P5b: the arity test of the context-defaulting calls is inverted',
+        file: 'src/compile.ts',
+        find: '!(CONTEXT_DEFAULTING.has(expr.name) && expr.args.length === 0) &&',
+        replace: '!(CONTEXT_DEFAULTING.has(expr.name) && expr.args.length === 1) &&'
+    },
+    {
+        name: 'reviewer P6: strict lang() matches a longer name that starts with the wanted one',
+        file: 'src/functions.ts',
+        find: 'return have === want || have.startsWith(`${want}-`);',
+        replace: 'return have === want || have.startsWith(want);'
+    },
+    {
+        name: "reviewer P9: strict following of a set: an attribute context does not get its element's children",
+        file: 'src/steps.ts',
+        find: 'if (place !== context && place.firstChild != null) starts.add(place.firstChild);',
+        replace: ''
+    },
+    {
+        name: 'reviewer P12: strict following[k] takes an attribute context for its element',
+        file: 'src/ranked.ts',
+        find: 'isTree.push(place === context);',
+        replace: 'isTree.push(true);'
+    },
+    {
+        name: 'reviewer P13: firstAbove is one short (binary search off by one)',
+        file: 'src/ranked.ts',
+        find: '    let high = values.length;\n    while (low < high) {\n        const middle = (low + high) >>> 1;\n        if ((values[middle] ?? 0) > value) high = middle;',
+        replace:
+            '    let high = values.length - 1;\n    while (low < high) {\n        const middle = (low + high) >>> 1;\n        if ((values[middle] ?? 0) > value) high = middle;'
+    },
+    {
+        name: 'reviewer P15: contains() is not charged for its input',
+        file: 'src/functions.ts',
+        find: '                state.charge(text.length >> 4);\n                return state.strict ? indexOfCharacters(text, part) !== -1 : text.includes(part);',
+        replace: '                return state.strict ? indexOfCharacters(text, part) !== -1 : text.includes(part);'
+    },
+    {
+        name: 'C-1: a predicate evaluation is not charged',
+        file: 'src/steps.ts',
+        find: '        state.charge(current.length);\n        for (let at = 0; at < current.length; at++) {',
+        replace: '        for (let at = 0; at < current.length; at++) {'
+    },
+    {
+        name: 'C-1: the operands of an `or` chain are not charged',
+        file: 'src/compile.ts',
+        find: '                for (const operand of operands) {\n                    state.charge(1);\n                    if (toBooleanValue(operand(focus, state))) return true;',
+        replace:
+            '                for (const operand of operands) {\n                    if (toBooleanValue(operand(focus, state))) return true;'
+    },
+    {
+        name: 'C-1: a function call is not charged',
+        file: 'src/compile.ts',
+        find: '        // One unit per call, so that a call on short strings (which charges nothing by length) is not free.\n        state.charge(1);\n',
+        replace: ''
+    },
+    {
+        name: 'C-2: upstream-mode id() asks the DOM for every evaluation and charges nothing',
+        file: 'src/runtime.ts',
+        find: '        this.charge(this.numberingFor(document).size);\n        const element = document.getElementById?.(id) ?? null;',
+        replace: '        const element = document.getElementById?.(id) ?? null;'
+    },
+    {
+        name: 'C-3: strict * and a name test accept every principal node type',
+        file: 'src/steps.ts',
+        find: '                if (state.strict) return type === principal;\n                return type === ELEMENT_NODE || type === ATTRIBUTE_NODE || type === NAMESPACE_NODE;',
+        replace: '                return type === ELEMENT_NODE || type === ATTRIBUTE_NODE || type === NAMESPACE_NODE;'
+    },
+    {
+        name: 'C-8: strict text() takes every DOM text node of a run',
+        file: 'src/steps.ts',
+        find: '!(state.strict && continuesATextRun(node));',
+        replace: 'true;'
+    },
+    {
+        name: 'C-11: strict mode asks the resolver at every name test again',
+        file: 'src/runtime.ts',
+        find: '        if (this.strict) return this.resolvePrefix(prefix, this.settings.contextNode);\n        if (!this.pure',
+        replace: '        if (!this.pure'
+    },
     {
         name: 'strict following[k]: the k-th match is one too far',
         file: 'src/ranked.ts',
@@ -87,7 +200,7 @@ const MUTANTS: readonly Mutant[] = [
     {
         name: 'following-sibling::T[last()] finds the nearest sibling instead of the farthest',
         file: 'src/steps.ts',
-        find: 'context.parentNode?.lastChild;',
+        find: 'isTreeNode(context) ? context.parentNode?.lastChild : null;',
         replace: 'context.nextSibling;'
     },
     {
@@ -99,8 +212,8 @@ const MUTANTS: readonly Mutant[] = [
     {
         name: 'strict following skips the first following sibling',
         file: 'src/steps.ts',
-        find: 'visits += walkSubtrees(place.nextSibling, step, state, out);',
-        replace: 'visits += walkSubtrees(place.nextSibling?.nextSibling, step, state, out);'
+        find: 'walkSubtrees(place.nextSibling, step, state, out, visits);',
+        replace: 'walkSubtrees(place.nextSibling?.nextSibling, step, state, out, visits);'
     },
     {
         name: 'hoisting treats position() as document-only',
@@ -111,8 +224,8 @@ const MUTANTS: readonly Mutant[] = [
     {
         name: 'strict substring starts at position 0',
         file: 'src/functions.ts',
-        find: 'const low = Math.max(first, 1);',
-        replace: 'const low = Math.max(first, 0);'
+        find: 'const low = Math.max(first, 1) - 1;',
+        replace: 'const low = Math.max(first, 0) - 1;'
     },
     {
         name: 'the id index keeps the last element of a duplicated id',
@@ -129,20 +242,14 @@ const MUTANTS: readonly Mutant[] = [
 ];
 
 const only = process.argv[2];
+// Every unit test file is a net (they take seconds together): a mutant that no file notices is a hole in all of them.
+const UNIT_TESTS = readdirSync(path.join(root, 'test/unit'))
+    .filter((file) => file.endsWith('.test.ts'))
+    .map((file) => `test/unit/${file}`);
+
 const NETS: readonly { readonly name: string; readonly command: readonly string[] }[] = [
-    {
-        name: 'unit tests',
-        command: [
-            '--test',
-            'test/unit/fast-paths.test.ts',
-            'test/unit/modes.test.ts',
-            'test/unit/strict-spec.test.ts',
-            'test/unit/review-limits.test.ts',
-            'test/unit/resolvers.test.ts',
-            'test/unit/axes.test.ts',
-            'test/unit/strict-axes.test.ts'
-        ]
-    },
+    { name: 'unit tests', command: ['--test', ...UNIT_TESTS] },
+    { name: 'strict oracle', command: ['test/strict-oracle.ts', 'xmldom08', '15', '60', '5', 'ns'] },
     { name: 'strict axes fuzz', command: ['test/strict-axes-fuzz.ts', '12', '60', '5'] },
     { name: 'mutation scenarios', command: ['test/mutation.ts'] },
     { name: 'differential (xmldom 0.8)', command: ['test/fuzz.ts', 'xmldom08', '40', '5', 'all'] }

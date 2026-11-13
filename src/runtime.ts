@@ -8,13 +8,13 @@ import {
     CDATA_SECTION_NODE,
     TEXT_NODE
 } from './dom.ts';
-import { NamespaceNode, treeRoot } from './dom.ts';
+import { NamespaceNode, treeRoot, XML_NAMESPACE_URI, xpathParent } from './dom.ts';
 import type { DomNode, NamespaceLookup } from './dom.ts';
 
 export type { NamespaceLookup };
 import { XPathBudgetError, XPathLimitError, XPathOrderError, XPathResolveError, XPathTimeoutError } from './errors.ts';
 import { now } from './clock.ts';
-import { FEW_NODES, Numbering, sortFew } from './order.ts';
+import { FEW_NODES, Numbering, NUMBERING_BATCH, sortFew } from './order.ts';
 
 /**
  * A node-set: an array without duplicates plus one fact about it, whether it is known to be in document order.
@@ -111,6 +111,11 @@ export const MAX_STRING_LENGTH: number = 1 << 24;
 
 /** Work units between two looks at the clock: rare enough to be free, frequent enough to stop within milliseconds. */
 const CLOCK_CHECK_INTERVAL = 4096;
+/** Nodes whose root one pure evaluation remembers (a longer chain is still walked and charged, just not kept). */
+const MAX_REMEMBERED_ROOTS = 1_000_000;
+
+/** Calls of charge() between two looks at the clock, however little each charged. */
+const CLOCK_CHECK_CALLS = 512;
 
 export class EvalState {
     readonly settings: EvalSettings;
@@ -127,11 +132,18 @@ export class EvalState {
     /** In the units of `now()` (one clock for the whole run, see clock.ts): only compared with later readings of it. */
     readonly #deadline: number;
     #nextClockCheck = CLOCK_CHECK_INTERVAL;
+    /** The work at which charge() next looks at the budget and the clock: the nearer of the two. */
+    #threshold: number;
+    #calls = 0;
     readonly #prefixes = new Map<string, string>();
     /** id -> first element, per document, built once per evaluation and dropped when caller code runs. */
     /** Strict: one namespace node per element and prefix per evaluation, so that a node-set holds each once. */
     readonly #namespaceNodeObjects = new Map<DomNode, Map<string, NamespaceNode>>();
     readonly #idIndexes = new Map<DomNode, ReadonlyMap<string, DomNode>>();
+    /** getElementById answers per document and id (upstream mode's id()), dropped when caller code runs. */
+    readonly #domLookups = new Map<DomNode, Map<string, DomNode | null>>();
+    /** node -> root of its tree, for the nodes a root walk has passed. Only filled when `pure` (no caller code can change the tree). */
+    readonly #roots = new Map<DomNode, DomNode>();
     /** Answers of document-only subexpressions (compile.ts `remembered`), per site and per document. */
     readonly #answers = new Map<object, Map<DomNode, XValue>>();
     /** The language of a node as lang() sees it (null: none), memoised so that a deep document stays linear. */
@@ -150,6 +162,10 @@ export class EvalState {
         this.#timeoutMs = settings.timeoutMs;
         this.#timed = settings.timeoutMs !== 0;
         this.#deadline = this.#timed ? now() + settings.timeoutMs : Number.POSITIVE_INFINITY;
+        this.#threshold = Math.min(
+            CLOCK_CHECK_INTERVAL,
+            settings.budget === 0 ? Number.POSITIVE_INFINITY : settings.budget
+        );
     }
 
     /** Total node visits charged so far. */
@@ -162,12 +178,22 @@ export class EvalState {
      * against the wall-clock limit. Every loop whose length depends on the document or on a string calls this.
      */
     charge(visits: number): void {
+        // One comparison on the common path: the work has not reached the next point at which the budget or the clock needs
+        // a look, and fewer than CLOCK_CHECK_CALLS calls have been made since the last look at the clock, whatever they
+        // charged (work that a call does not charge, a predicate or a string function on a short string, cannot keep the
+        // time limit from being looked at).
         this.#work += visits;
+        if (this.#work >= this.#threshold || ++this.#calls >= CLOCK_CHECK_CALLS) this.#check();
+    }
+
+    #check(): void {
         if (this.#budget !== 0 && this.#work > this.#budget) throw new XPathBudgetError(this.#budget);
-        if (this.#work >= this.#nextClockCheck) {
+        if (this.#work >= this.#nextClockCheck || this.#calls >= CLOCK_CHECK_CALLS) {
+            this.#calls = 0;
             this.#nextClockCheck = this.#work + CLOCK_CHECK_INTERVAL;
             if (this.#timed && now() > this.#deadline) throw new XPathTimeoutError(this.#timeoutMs);
         }
+        this.#threshold = Math.min(this.#nextClockCheck, this.#budget === 0 ? Number.POSITIVE_INFINITY : this.#budget);
     }
 
     /**
@@ -175,10 +201,45 @@ export class EvalState {
      * from the document (the numbering, the sibling ranks) may be stale and is dropped. Nothing is dropped while no such
      * code runs, which is what keeps an evaluation with a namespace resolver linear.
      */
+    /**
+     * The root of the tree that holds the node (section 2), walked up through parent links. The walk is charged as it goes
+     * (a cyclic parent chain is stopped by the limits). While the evaluation is pure the nodes passed are remembered, so
+     * the roots of the nodes of a deep chain cost one walk between them, not one walk each.
+     */
+    treeRootOf(node: DomNode): DomNode {
+        const passed: DomNode[] = [];
+        let current = node;
+        let root: DomNode | undefined;
+        let steps = 0;
+        let charged = 0;
+        for (;;) {
+            root = this.pure ? this.#roots.get(current) : undefined;
+            if (root !== undefined) break;
+            const parent = xpathParent(current);
+            if (parent === null) {
+                root = current;
+                break;
+            }
+            if (this.pure && passed.length < MAX_REMEMBERED_ROOTS) passed.push(current);
+            current = parent;
+            steps++;
+            if (steps - charged >= 1024) {
+                this.charge(steps - charged);
+                charged = steps;
+            }
+        }
+        // One step is one visit; a node that is its own root (the usual context, the document) costs nothing.
+        if (steps > charged) this.charge(steps - charged);
+        for (const one of passed) this.#roots.set(one, root);
+        return root;
+    }
+
     userCodeRan(): void {
         this.#numbering = null;
         this.siteCaches.clear();
         this.#idIndexes.clear();
+        this.#domLookups.clear();
+        this.#roots.clear();
         this.#namespaceNodeObjects.clear();
         this.#answers.clear();
         this.languages.clear();
@@ -220,7 +281,8 @@ export class EvalState {
         prefix: string,
         attribute: DomNode | null,
         uri: string,
-        local: number
+        local: number,
+        ordinal: number
     ): NamespaceNode {
         let byPrefix = this.#namespaceNodeObjects.get(owner);
         if (byPrefix === undefined) {
@@ -229,7 +291,7 @@ export class EvalState {
         }
         const known = byPrefix.get(prefix);
         if (known !== undefined && known.baseNode === attribute && known.nodeValue === uri) return known;
-        const made = new NamespaceNode(prefix, attribute, uri, owner, local);
+        const made = new NamespaceNode(prefix, attribute, uri, owner, local, ordinal);
         byPrefix.set(prefix, made);
         return made;
     }
@@ -256,7 +318,7 @@ export class EvalState {
         const first = nodes[0];
         if (first === undefined || nodes.length === 1) return nodes.slice();
         let numbering = this.#numbering;
-        let sorted = numbering === null ? null : numbering.sort(nodes);
+        let sorted = numbering === null ? null : numbering.sort(nodes, this.strict);
         // Caller code keeps invalidating the numbering (see userCodeRan): a few nodes are ordered locally, because
         // numbering the whole tree for each of them is what made such an evaluation quadratic.
         if (sorted === null && numbering === null && !this.pure && nodes.length <= FEW_NODES) {
@@ -267,14 +329,42 @@ export class EvalState {
         }
         if (sorted === null) {
             // No numbering yet, or it is for another tree.
-            numbering = new Numbering(first);
-            this.charge(numbering.size);
-            sorted = numbering.sort(nodes);
+            numbering = this.numbered(first);
+            sorted = numbering.sort(nodes, this.strict);
             if (this.settings.keepNumbering) this.#numbering = numbering;
         }
         if (sorted === null) throw new XPathOrderError();
         this.charge(nodes.length);
         return sorted;
+    }
+
+    /** Numbers the tree of `node`, charging the nodes as they are walked (and the rest at the end). */
+    private numbered(node: DomNode): Numbering {
+        const numbering = new Numbering(node, (units) => {
+            this.charge(units);
+        });
+        this.charge(numbering.size % NUMBERING_BATCH);
+        return numbering;
+    }
+
+    /**
+     * `document.getElementById(id)`, for upstream mode's few-token id(). The DOM answers by its own rules (some walk the
+     * whole document for each call), so each call that reaches the DOM is charged the size of the document, and the
+     * answer is remembered for the evaluation while no caller code can change the document: `//*[id('x')]` asks the DOM
+     * once, not once per element.
+     */
+    elementById(document: DomNode, id: string): DomNode | null {
+        let known = this.#domLookups.get(document);
+        if (known === undefined) {
+            known = new Map<string, DomNode | null>();
+            if (this.pure) this.#domLookups.set(document, known);
+        }
+        const hit = known.get(id);
+        if (hit !== undefined) return hit;
+        this.charge(this.numberingFor(document).size);
+        const element = document.getElementById?.(id) ?? null;
+        known.set(id, element);
+        return element;
     }
 
     /**
@@ -284,8 +374,7 @@ export class EvalState {
     numberingFor(node: DomNode): Numbering {
         let numbering = this.#numbering;
         if (numbering === null || numbering.root !== treeRoot(node)) {
-            numbering = new Numbering(node);
-            this.charge(numbering.size);
+            numbering = this.numbered(node);
             if (this.settings.keepNumbering) this.#numbering = numbering;
         }
         return numbering;
@@ -298,8 +387,7 @@ export class EvalState {
         let numbering = this.#numbering;
         let merged = numbering === null ? null : numbering.merge(a, b);
         if (merged === null) {
-            numbering = new Numbering(first);
-            this.charge(numbering.size);
+            numbering = this.numbered(first);
             merged = numbering.merge(a, b);
             if (this.settings.keepNumbering) this.#numbering = numbering;
         }
@@ -307,8 +395,24 @@ export class EvalState {
         return merged;
     }
 
-    /** Namespace URI for the prefix of a function or variable name, looked up from the current context node. */
+    /**
+     * Namespace URI for the prefix of a function or variable name. Upstream mode asks the resolver each time, from the
+     * current context node. Strict mode takes the namespace declarations of the expression context as fixed (section 1:
+     * they are part of the context): each prefix is resolved once, from the node the evaluation started on, and the
+     * answer is kept, so the resolver is never called while the document is being walked.
+     */
     resolvePrefix(prefix: string, node: DomNode): string {
+        if (!this.strict) return this.#lookUpPrefix(prefix, node);
+        const known = this.#prefixes.get(prefix);
+        if (known !== undefined) return known;
+        const uri = this.#lookUpPrefix(prefix, this.settings.contextNode);
+        this.#prefixes.set(prefix, uri);
+        return uri;
+    }
+
+    #lookUpPrefix(prefix: string, node: DomNode): string {
+        // The `xml` prefix is bound to the XML namespace in every context (XML Names, which XPath 1.0 section 2.3 relies on).
+        if (this.strict && prefix === 'xml') return XML_NAMESPACE_URI;
         const uri = this.settings.namespaces(prefix, node, (units) => {
             this.charge(units);
         });
@@ -319,10 +423,11 @@ export class EvalState {
 
     /** Namespace URI for the prefix of a name test: looked up from the node the evaluation started on. */
     resolveNameTestPrefix(prefix: string): string {
-        if (!this.pure || this.settings.namespaceCallback) return this.resolvePrefix(prefix, this.settings.contextNode);
+        if (this.strict) return this.resolvePrefix(prefix, this.settings.contextNode);
+        if (!this.pure || this.settings.namespaceCallback) return this.#lookUpPrefix(prefix, this.settings.contextNode);
         const known = this.#prefixes.get(prefix);
         if (known !== undefined) return known;
-        const uri = this.resolvePrefix(prefix, this.settings.contextNode);
+        const uri = this.#lookUpPrefix(prefix, this.settings.contextNode);
         this.#prefixes.set(prefix, uri);
         return uri;
     }
@@ -337,12 +442,38 @@ export class EvalState {
 export function stringValueOf(node: DomNode, state?: EvalState): string {
     const type = node.nodeType;
     if (type === ATTRIBUTE_NODE) return node.value || (node.nodeValue ?? '');
+    if ((type === TEXT_NODE || type === CDATA_SECTION_NODE) && state?.strict === true) {
+        // Section 5.7 (strict): the text node of the data model is the whole run of adjacent Text and CDATASection
+        // siblings, and the node that stands for it is the first (see continuesATextRun in steps.ts).
+        let run = node.nodeValue ?? '';
+        let count = 1;
+        let charged = 0;
+        for (let next = node.nextSibling; next != null; next = next.nextSibling) {
+            if (next.nodeType !== TEXT_NODE && next.nodeType !== CDATA_SECTION_NODE) break;
+            run += next.nodeValue ?? '';
+            count++;
+            if (run.length > MAX_STRING_LENGTH) throw new XPathLimitError('a text node is too long');
+            // Charged as the walk goes: a cycle of empty text nodes never makes the string long.
+            if (count - charged >= 1024) {
+                state.charge(count - charged);
+                charged = count;
+            }
+        }
+        state.charge(count - charged + (run.length >> 4));
+        return run;
+    }
     if (type !== ELEMENT_NODE && type !== DOCUMENT_NODE && type !== DOCUMENT_FRAGMENT_NODE) return node.nodeValue ?? '';
     let text = '';
     let visits = 1;
+    let charged = 0;
     let current: DomNode | null | undefined = node.firstChild;
     while (current != null) {
         visits++;
+        // Charged as the walk goes: one that never ends (a cyclic DOM) is stopped by the limits, not after it.
+        if (state !== undefined && visits - charged >= 1024) {
+            state.charge(visits - charged);
+            charged = visits;
+        }
         const kind = current.nodeType;
         let next: DomNode | null | undefined = null;
         if (kind === TEXT_NODE || kind === CDATA_SECTION_NODE) text += current.nodeValue ?? '';
@@ -354,7 +485,7 @@ export function stringValueOf(node: DomNode, state?: EvalState): string {
         }
         current = next;
     }
-    state?.charge(visits + (text.length >> 4));
+    state?.charge(visits - charged + (text.length >> 4));
     return text;
 }
 

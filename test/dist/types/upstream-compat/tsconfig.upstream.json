@@ -1,0 +1,20 @@
+{
+    "extends": "../../../../tsconfig.json",
+    "compilerOptions": {
+        "lib": ["es2022", "dom"],
+        "types": [],
+        "noEmit": true,
+        "skipLibCheck": false,
+        "module": "nodenext",
+        "moduleResolution": "nodenext",
+        "verbatimModuleSyntax": false,
+        "erasableSyntaxOnly": false,
+        "isolatedDeclarations": false,
+        "declaration": false,
+        "allowImportingTsExtensions": false,
+        "rewriteRelativeImportExtensions": false,
+        "paths": { "xpath": ["../../../../node_modules/xpath/xpath.d.ts"] }
+    },
+    "include": [],
+    "files": ["consumer.mts"]
+}

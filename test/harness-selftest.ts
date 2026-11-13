@@ -157,6 +157,18 @@ try {
         modesAll.status === 1 && /[1-9]\d* differences/.test(modesAll.output),
         modesAll.output
     );
+    // The independent strict reference must find the difference when the engine is asked for upstream mode.
+    const oracleUpstream = run(
+        'strict-oracle.ts',
+        ['xmldom08', '10', '60', '1'],
+        { STRICT_ORACLE_MODE: 'upstream' },
+        120_000
+    );
+    check(
+        'strict oracle: a candidate in upstream mode is found out',
+        oracleUpstream.status === 1 && /[1-9]\d* differences/.test(oracleUpstream.output),
+        oracleUpstream.output
+    );
     // A case the candidate must refuse (the oracle's own answer is not a refusal) fails the hostile gate.
     const answeredARefusal = run(
         'hostile.ts',

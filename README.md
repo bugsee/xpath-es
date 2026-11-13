@@ -2,9 +2,12 @@
 
 A modern, strictly typed XPath 1.0 engine for TypeScript and JavaScript, **work in progress**.
 
-The goal is an engine for libraries that evaluate XPath on untrusted XML, such as XML-signature and SAML stacks:
-results identical to the widely used [`xpath`](https://github.com/goto100/xpath) package, and no input that makes it
-quadratic. Nothing here is published, and the API is not stable.
+The goal is an engine for libraries that evaluate XPath on untrusted XML, such as XML-signature and SAML stacks: the
+Recommendation's answers by default (`strict` mode, with the deviations listed below), the answers of the widely used
+[`xpath`](https://github.com/goto100/xpath) package on request (`upstream` mode), and bounded work on hostile input: every
+evaluation has a work budget and a time limit, and an input that would need more is refused with a typed error. Some
+expressions are inherently quadratic on some documents (see [Limits](#limits)); the engine refuses those rather than
+running them. Nothing here is published, and the API is not stable.
 
 ## Status
 
@@ -68,8 +71,10 @@ Other deliberate differences from upstream, in either mode:
   quadratic or worse on a document with a parent of thousands of children.
 - Plain-object resolver maps (`namespaces`, `functions`, `variables`) are read by own property only: a prefix called
   `constructor`, or a function called `toString`, is not a member of `Object.prototype`.
-- A namespace resolver (a function) is asked at every name test, as upstream asks it, but it must not change the
-  document. Custom functions and variable resolvers may: the engine drops the numbering and the sibling ranks it made
+- In upstream mode a namespace resolver (a function) is asked at every name test, as upstream asks it, but it must not
+  change the document; a plain map (`useNamespaces`) is data and costs nothing. In strict mode each prefix is asked once
+  per evaluation, before anything is walked (section 1: the declarations of the expression context are fixed), so a
+  resolver never runs during the walk and the one-pass axes stay on. Custom functions and variable resolvers may: the engine drops the numbering and the sibling ranks it made
   when one has run, and orders a handful of nodes locally in the meantime (`FEW_NODES` in `src/order.ts`).
 - Document-only subexpressions (no context node, no position, no variable, no function the engine does not know) are
   evaluated once per document: `//a[//b[//c]]` computes `//b[//c]` once, not once per `a`.
@@ -81,10 +86,13 @@ Other deliberate differences from upstream, in either mode:
 
 - **`upstream`** (opt in with `mode: 'upstream'`) is the adoption gate: the node-sets and the values existing consumers (samlify, xml-crypto,
   xml-encryption) have always seen from `xpath` 0.0.36, quirks included.
-- **`strict`** (the default) is XPath 1.0 as the Recommendation (16 November 1999) specifies it. Its answers are checked against the
-  text of the Recommendation (`test/unit/strict-spec.test.ts`), never against upstream, and `test/mode-agreement.ts`
-  checks that on every random expression that uses none of the deviating features the two modes agree, so strict mode
-  does not regress where upstream is right.
+- **`strict`** (the default) follows the Recommendation (16 November 1999), except where [the list below](#where-strict-mode-differs-from-the-recommendation)
+  says otherwise. Its answers are checked against the text of the Recommendation (`test/unit/strict-spec.test.ts`,
+  `test/unit/strict-conformance.test.ts`), against an independent reference evaluator written from the Recommendation
+  that shares no code with the engine (`test/strict-oracle.ts`, random documents and location paths, on xmldom 0.8 and
+  0.9 in CI and on jsdom, happy-dom and linkedom in the nightly run), never against upstream; and
+  `test/mode-agreement.ts` checks that on every random expression that uses none of the deviating features the two
+  modes agree, so strict mode does not regress where upstream is right.
 
 ### Known deviations from XPath 1.0 inherited from upstream (`upstream` mode)
 
@@ -106,13 +114,56 @@ Each one is pinned in both modes in `test/unit/modes.test.ts`.
 | namespace axis (5.4) | each evaluation makes new node objects, so a context reached twice yields a namespace node twice (class 5); `xmlns=""` makes a node; a namespace node has no parent | one node per element and prefix, held once; no node for `xmlns=""`; the parent is the element |
 | axis names, NUL (3.7) | an unknown axis name selects nothing (`foo::bar` is `[]`); a NUL ends the expression | a syntax error |
 | an unresolvable prefix (2.3) | an error only when a node test meets a node: `//e[count(following-sibling::p:x)=0]` is fine when `e` has no following sibling | an error whenever the expression is evaluated |
+| the `xml` prefix (2.3) | unresolved unless the resolver knows it | bound to `http://www.w3.org/XML/1998/namespace` without a declaration: `//@xml:lang` works with no resolver |
+| principal node type (2.3) | `*` and a name test accept attributes, elements and namespace nodes on every axis: `@x/self::*` finds `@x`, `count(//@x/descendant-or-self::*)` counts the attribute | the principal node type of the axis: attributes on `attribute::`, namespace nodes on `namespace::`, elements on every other |
+| `node()` (2.3) | rejects namespace nodes and a document fragment | accepts every node of the data model: namespace nodes, a document fragment (the root of a detached tree) |
+| namespace axis order (5.4) | two inherited bindings cannot be ordered: `//b/namespace::*`, `//namespace::*` and `count(//b/namespace::*[name()="xml"])` throw `XPathOrderError` (class 5) | in document order: `xml`, the element's own declarations, then those inherited from its parent outwards; an element, then its namespace nodes, then its attributes |
+| a boolean and a node-set (3.4) | `false() < //b` compares the boolean, as a number, with each node's number (a boolean on the right converts the node-set to a boolean) | both orders convert the node-set to a boolean |
+| `local-name()` (4.1) | falls back to the node's name: `#text`, `#document`, `#comment` | empty for a node without an expanded name; only an element, attribute, processing instruction or namespace node has one |
+| white space and numbers (3.7) | none between a name and `(` or `::` (`count (//a)` is a syntax error), `1.` is not a number, `,` and `$` do not make `*`, `div` an operand (`concat("x", *)`, `$div`) | all of them are lexed as the grammar says |
+| text nodes (5.7) | one node per DOM Text or CDATASection node: `<a>x<![CDATA[cd]]>w</a>` has three `text()` nodes, and `string(//a/text())` is `x` | one text node per run of adjacent Text and CDATASection siblings, represented by the first DOM node of the run, whose string-value is the whole run: one `text()` node, `string(//a/text())` is `xcdw` |
+| the XML declaration (5) | some DOMs (xmldom) keep it as a processing instruction child of the document: `count(/processing-instruction())` is 1 for `<?xml version="1.0"?><a/>` | not a node |
+| `/` (2) | the owner document, even of a detached element | the root of the tree that contains the context node: for a detached element or a document fragment, its topmost ancestor |
+| `translate()`, `contains()`, `starts-with()`, `substring-before()`, `substring-after()` (4.2) | UTF-16 code units: `translate("😀", "😁", "x")` is `x` followed by a lone surrogate | characters; a match cannot begin or end inside a surrogate pair |
 
 **`id()` cannot detect duplicate IDs in either mode.** When two elements have the same ID, `id()` answers the first in
 the order the DOM looks up (document order for the DOMs tested); the Recommendation leaves duplicates undefined, and
 Blink, WebKit and Gecko answer the first as well. The ID attributes are `id` and, in strict mode, `xml:id`.
 
 Strict is the default, so code written against `xpath` that relied on a quirk above must ask for `mode: 'upstream'`.
-Cost: strict `following::` and `preceding::` are linear over a node-set of contexts. Without a positional predicate they
+
+### Where strict mode differs from the Recommendation
+
+Strict mode is the Recommendation except for these, each a choice or a limit and none an accident:
+
+- **An HTML document** (`contentType` `text/html`) matches names without regard to case, as HTML does; an XML document never does.
+- **Text nodes are represented by DOM nodes.** `text()` yields one node per run of adjacent Text and CDATASection siblings, and
+  that node is the first DOM node of the run, so identity, document order and node-set semantics stay those of the DOM. The
+  string-value (`string()`, `=`, `contains()`, `sum()`) is the whole run. Code that takes the selected DOM node and reads its own
+  `nodeValue` or `data` sees the first piece only. This matters for signed values: a NameID `victim@example.test` with a CDATA
+  tail `.evil.test` canonicalises to the same bytes as the same text without CDATA; strict mode reads it in full through
+  `string()`, where `upstream` mode's `string(//NameID/text())` is only the first piece.
+- **The order of namespace nodes** within an element is not specified by the Recommendation; strict mode orders them as the
+  table says.
+- **DocumentType, Entity, EntityReference and Notation nodes** are not nodes of the model: a node test never selects them.
+- **`id()`** answers one element per token, the first in document order; duplicate IDs are not detected. The ID attributes are
+  `id` and `xml:id`.
+- **Limits** (below) refuse an evaluation that needs more than the work budget or the time limit, which the Recommendation
+  does not know of.
+- **Predicates other than `[k]` and `[last()]` after `following::` or `preceding::`** are evaluated for each context node, as
+  the Recommendation defines them; they are not made linear (below).
+
+**A difference between the modes on the signature path.** A SAML consumer looks for the element that carries the signed ID with
+an expression such as `//*[@*[local-name(.)='ID']='<id>']`. In `upstream` mode (and in `xpath` itself) an element that only
+declares `xmlns:ID="<id>"` also matches, because upstream lists namespace declarations as attributes; in strict mode it does
+not (section 5.3: a declaration is not an attribute). A response that carries such a decoy next to the signed element is
+therefore rejected by a consumer in `upstream` mode (two matches) and accepted in strict mode (one match, the signed
+element). `test/unit/strict-conformance.test.ts` pins both behaviours.
+
+Cost: strict `following::` and `preceding::` are linear over a node-set of contexts when there is no positional predicate and
+when `[k]` or `[last()]` is the first predicate; other positional predicates are not. The bound holds for an evaluation
+in which no variable or function callback is in use (`variables` or `functions` supplied and used by the expression, whatever
+the value): with one, each context node is evaluated on its own and the work budget can refuse the expression. Without a positional predicate they
 are one pass over the tree (`preceding::` of a set is everything before the last context that is not an ancestor of it).
 With `[k]` or `[last()]` as the first predicate they are one pass over the tree, then a lookup per context node by
 document-order number (a binary search; the ancestors of each context are kept on a stack while the contexts are taken
@@ -125,13 +176,13 @@ and costs a walk of the axis for each, so it can reach the budget over thousands
 
 Every evaluation has a work budget and a time limit, so that an expression on a hostile document stops with a typed
 error (`XPathBudgetError`, code `BUDGET`; `XPathTimeoutError`, code `TIMEOUT`; `XPathLimitError`, code `LIMIT`) instead
-of running for minutes. A *unit* is a node visited, a node-set member sorted, or (for string functions) sixteen
-characters scanned.
+of running for minutes. A *unit* is a node visited, a node-set member sorted, one evaluation of a predicate, an operand of a boolean, arithmetic or
+comparison chain, a function call or a variable, or (for string functions) sixteen characters scanned.
 
 | | default | measured |
 |---|---|---|
-| `DEFAULT_BUDGET` | 5,000,000 units | the most one evaluation of a signed SAML login response took was **8,004** units, for a response with a 2,000-value group list (4 units per value, under 1 ms); the hostile documents of the gate (256 KiB each) take at most **328,000** units (18 ms). The default is 600 times the first and 15 times the second, and a hostile expression is stopped after at most 5,000,000 units, a few hundred milliseconds |
-| `DEFAULT_TIMEOUT_MS` | 1,000 ms | the backstop for work the units do not model; it is read every 4,096 units |
+| `DEFAULT_BUDGET` | 5,000,000 units | the most one evaluation of a signed SAML login response took was **14,232** units, for a response with a 2,000-value group list (7 units per value, about 1 ms); the hostile documents of the gate (256 KiB each) take at most **328,000** units (18 ms). The default is 350 times the first and 15 times the second. A hostile expression is stopped after at most 5,000,000 units: 49 ms for `//*` with 20,000 predicates `[1=1]` on 100,000 nodes (it ran 25 s before predicate evaluations were counted), up to the time limit where a unit costs more |
+| `DEFAULT_TIMEOUT_MS` | 1,000 ms | the backstop for work the units do not model; the clock is read every 4,096 units and every 512 charges, so work that charges little cannot keep the limit from being looked at |
 | namespace nodes | 262,144 per evaluation | a document nested 8,000 levels deep with a new prefix at every level made 32 million nodes (4 GB) before |
 | `id()` | 10,000 distinct tokens per call | 40,000 tokens took 39 s before |
 | strings | 16,777,216 characters per string | nested `concat()` doubled a string per level |
@@ -142,8 +193,12 @@ off, `Infinity` works as well; anything that is not a number of at least 0 (a st
 negative number) is refused with `XPathContextError`, because it would otherwise turn the limit off silently.
 `bench/limits.ts` prints the measurements. A caller whose legitimate documents are larger raises the limits.
 
-The parse cache of the compat entry is a byte-bounded LRU (256 Ki characters of source in all, 512 programs) and does
-not keep an expression longer than 2,048 characters.
+The parse cache of the compat entry is a byte-bounded LRU (an estimate of 16 MiB retained in all, at 512 bytes per character
+of source, and 512 programs) and does not keep an expression longer than 2,048 characters.
+
+Some expressions stay expensive on some documents, and the limits refuse them: `//a[count(preceding::a)=1]` over 50,000
+siblings, a union of 20,000 named steps, and a predicate such as `following::*[position() < 3]` over thousands of contexts.
+Raise the budget for a call that is meant to do that much work.
 
 ## Errors
 
@@ -157,6 +212,10 @@ CommonJS, so a program that loads both has two copies of the classes and `instan
 Node >= 22.18 (the TypeScript sources run directly, by type stripping; `npm run build` makes the plain JavaScript in
 `dist/`, see [Build and compatibility](#build-and-compatibility)).
 
+The one dependency that is a release tarball (`xpath-fork`, a dev dependency) needs `allow-remote=root` under npm 12 (EALLOWREMOTE
+otherwise); the committed `.npmrc` sets it, and npm 10 and 11 ignore it. The integrity of the tarball is pinned in
+`package-lock.json`.
+
 ```sh
 npm ci
 npm run check            # tsc (TypeScript 7, every strict flag), oxlint (type-aware), oxfmt --check
@@ -166,6 +225,7 @@ npm run test:harness     # the harness tests itself on candidates whose verdict 
 npm run test:differential        # the engine against upstream xpath (documents, scenarios, random expressions)
 npm run test:differential:fork   # the bugsee/xpath fork against upstream (its expression fuzzer: test:fuzz-expr:fork)
 npm run test:hostile
+npm run test:oracle        # strict mode against the independent reference evaluator (test/strict-oracle.ts)
 npm run fixtures         # builds the signed SAML responses the benchmarks use (results/, not committed)
 npm run bench:hostile    # numbers, per engine
 npm run bench:consumers
@@ -196,6 +256,7 @@ CANDIDATE=xpath node test/mutation.ts        # the oracle against itself: must s
 | `test/hostile-digests.ts` | records what the oracle answers on each hostile case (`baselines/oracle-digests.json`) |
 | `test/hostile-strict-digests.ts` | records the Recommendation's answer, from plain DOM code, on the hostile cases where strict mode differs from upstream by design (`baselines/strict-digests.json`, used when `CANDIDATE_MODE=strict`) |
 | `test/strict-axes-fuzz.ts <documents> <expressions> [seed] [dom]` | strict `following::`/`preceding::` fast paths against the strict slow path (`XPathProgram.forceSlowPath`), on random node-set contexts with positional predicates |
+| `test/strict-oracle.ts [dom] <documents> <expressions> [seed] [ns]` | strict mode against an independent reference evaluator written from the Recommendation (the data model, the axes, node tests, positions, unions), on random documents and location paths; `STRICT_ORACLE_MODE=upstream` is the self-test |
 | `test/harness-selftest.ts` | a candidate that reverses node-sets must be caught by the fuzzer, a quadratic one by the gate |
 
 The DOM matrix for `<dom>`: `xmldom08` (`@xmldom/xmldom` 0.8.15, the default), `xmldom09` (`@xmldom/xmldom` 0.9.x), `jsdom`,

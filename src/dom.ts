@@ -108,8 +108,21 @@ export class NamespaceNode implements DomNode {
     readonly baseNode: DomNode | null;
     /** Index of `baseNode` in `ownerElement.attributes`, or -1 when it is declared on an ancestor (or is `xml`). */
     readonly localIndex: number;
+    /**
+     * Strict mode: the place of this binding among the element's namespace nodes (`xml` first, then the declarations of
+     * the element, then those inherited from its parent outwards), which is their document order. -1 for the nodes upstream
+     * mode makes, whose order is as upstream's (and undefined between two inherited ones).
+     */
+    readonly ordinal: number;
 
-    constructor(prefix: string, baseNode: DomNode | null, uri: string, owner: DomNode, localIndex: number) {
+    constructor(
+        prefix: string,
+        baseNode: DomNode | null,
+        uri: string,
+        owner: DomNode,
+        localIndex: number,
+        ordinal = -1
+    ) {
         this.nodeName = prefix;
         this.prefix = prefix;
         this.localName = prefix;
@@ -118,6 +131,7 @@ export class NamespaceNode implements DomNode {
         this.ownerDocument = owner.ownerDocument;
         this.baseNode = baseNode;
         this.localIndex = localIndex;
+        this.ordinal = ordinal;
     }
 
     toString(): string {
@@ -125,8 +139,21 @@ export class NamespaceNode implements DomNode {
     }
 }
 
+/**
+ * A namespace node is recognised by its brand, not by `instanceof`: the package ships as ES modules and as CommonJS, so a
+ * program that loads both has two copies of the class, and a node made by one must be recognised by the other.
+ */
 export function isNamespaceNode(node: DomNode): node is NamespaceNode {
-    return node instanceof NamespaceNode;
+    return (
+        node.nodeType === NAMESPACE_NODE &&
+        node.isXPathNamespace === true &&
+        'localIndex' in node &&
+        typeof node.localIndex === 'number' &&
+        'ordinal' in node &&
+        typeof node.ordinal === 'number' &&
+        'baseNode' in node &&
+        node.ownerElement != null
+    );
 }
 
 /** Parent in the XPath data model as upstream walks it: `parentNode`, else `ownerElement`. */

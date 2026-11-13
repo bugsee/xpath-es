@@ -1,6 +1,7 @@
 // Comparisons (XPath 1.0 section 3.4) as upstream evaluates them, without its nested loop over two node-sets.
-// Q-CMP-1: `boolean < node-set` compares the boolean, as a number, with each node's number; `node-set < boolean`
-// converts the node-set to a boolean first (the Recommendation asks for the second form in both directions).
+// Q-CMP-1 (upstream mode): `boolean < node-set` compares the boolean, as a number, with each node's number; `node-set <
+// boolean` converts the node-set to a boolean first. The Recommendation asks for the second form in both directions,
+// which is what strict mode does.
 
 import type { BinaryOp } from './ast.ts';
 import { NodeSet, stringToNumber, stringValueOf, toBooleanValue } from './runtime.ts';
@@ -104,6 +105,10 @@ export function compareValues(op: BinaryOp, left: XValue, right: XValue, state: 
         if (typeof right === 'boolean') return relate(op, left.size > 0 ? 1 : 0, right ? 1 : 0);
         return anyNodeNumber(left, op, scalarToNumber(right, state.strict), state);
     }
+    // Section 3.4, strict: a node-set against a boolean is compared as booleans, whichever side the boolean is on (upstream
+    // mode keeps Q-CMP-1: a boolean on the left is compared, as a number, with each node's number).
+    if (state.strict && right instanceof NodeSet && typeof left === 'boolean')
+        return relate(op, left ? 1 : 0, right.size > 0 ? 1 : 0);
     const number = scalarToNumber(left, state.strict);
     if (right instanceof NodeSet) return anyNodeNumber(right, FLIP[op], number, state);
     return relate(op, number, scalarToNumber(right, state.strict));

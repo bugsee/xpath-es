@@ -105,19 +105,46 @@ const isSpace = (code: number): boolean => code === 0x20 || code === 0x09 || cod
  * expressions (`^\s+|\s+$` and a run collapse) backtrack quadratically on a long string that has inner runs of spaces.
  */
 function normalizeSpace(text: string): string {
-    let out = '';
-    let pending = false;
+    // The words are copied out as slices and joined once: appending a character at a time keeps a string of ropes alive
+    // (hundreds of megabytes for a 15-million-character input).
+    const words: string[] = [];
+    let start = -1;
     for (let i = 0; i < text.length; i++) {
         if (isSpace(text.charCodeAt(i))) {
-            pending = out.length > 0;
-        } else {
-            if (pending) out += ' ';
-            pending = false;
-            out += text.charAt(i);
-        }
+            if (start >= 0) words.push(text.slice(start, i));
+            start = -1;
+        } else if (start < 0) start = i;
     }
-    return out;
+    if (start >= 0) words.push(text.slice(start));
+    return words.join(' ');
 }
+
+/** Code units gathered before a piece of a translate() result is made into a string. */
+const TRANSLATE_CHUNK = 8192;
+const SURROGATE = /[\ud800-\udfff]/;
+
+/** Index of `part` in `text` at or after `from`, where a match may not begin or end inside a surrogate pair (strict: characters). */
+function indexOfCharacters(text: string, part: string, from = 0): number {
+    let at = text.indexOf(part, from);
+    if (!SURROGATE.test(part)) return at;
+    while (at !== -1 && (splitsPair(text, at) || splitsPair(text, at + part.length))) at = text.indexOf(part, at + 1);
+    return at;
+}
+
+/** True when the position falls between the two halves of a surrogate pair (inside one character). */
+function splitsPair(text: string, position: number): boolean {
+    const next = text.charCodeAt(position);
+    const before = text.charCodeAt(position - 1);
+    return position > 0 && next >= 0xdc00 && next <= 0xdfff && before >= 0xd800 && before <= 0xdbff;
+}
+
+/** The characters (code points) of the text, as slices: the unit strict mode counts in. */
+function characterAt(text: string, i: number): number {
+    const code = text.charCodeAt(i);
+    const next = text.charCodeAt(i + 1);
+    return code >= 0xd800 && code <= 0xdbff && next >= 0xdc00 && next <= 0xdfff ? 2 : 1;
+}
+
 /** String(value) without the lint's worry: a DOM node's own toString() is what Q-FN-ID wants. */
 const stringify: (value: unknown) => string = String;
 const ID_SEPARATOR = /[\r\n\t ]+/;
@@ -248,10 +275,21 @@ export function strictSubstring(text: string, start: number, length: number | un
         end = first + Math.round(length);
         if (Number.isNaN(end)) return '';
     }
-    const characters = Array.from(text);
-    const low = Math.max(first, 1);
-    const high = Math.min(end, characters.length + 1);
-    return low < high ? characters.slice(low - 1, high - 1).join('') : '';
+    // Walk the string once, by characters, to the offsets of the first and the last wanted one: no array of characters.
+    const low = Math.max(first, 1) - 1;
+    const high = end - 1;
+    if (!(low < high)) return '';
+    let startOffset = text.length;
+    let endOffset = text.length;
+    let index = 0;
+    for (let i = 0; i < text.length; i += characterAt(text, i), index++) {
+        if (index === low) startOffset = i;
+        if (index === high) {
+            endOffset = i;
+            break;
+        }
+    }
+    return startOffset < endOffset ? text.slice(startOffset, endOffset) : '';
 }
 
 export function compileCoreFunction(name: string, args: readonly Compiled[]): Compiled | null {
@@ -294,8 +332,7 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                 if (tokens.size <= FEW_ID_TOKENS && !state.strict) {
                     // A few tokens: the DOM's own lookup, so that its rules for what an ID is stay its own.
                     for (const id of tokens) {
-                        state.charge(1);
-                        const element = document.getElementById(id);
+                        const element = state.elementById(document, id);
                         if (element != null) found.add(element);
                     }
                 } else {
@@ -305,7 +342,7 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                     for (const id of tokens) {
                         // The empty token (from a leading separator) is the DOM's own business: xmldom's getElementById('')
                         // answers the first element, since a missing id attribute reads as ''. Upstream asks the DOM.
-                        const element = id === '' && !state.strict ? document.getElementById('') : index.get(id);
+                        const element = id === '' && !state.strict ? state.elementById(document, '') : index.get(id);
                         if (element != null) found.add(element);
                     }
                 }
@@ -314,7 +351,15 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
         case 'local-name':
             return (focus, state) => {
                 const node = targetNode(name, args, focus, state);
-                return node === null ? '' : node.localName || node.target || node.nodeName || '';
+                if (node === null) return '';
+                // Section 4.1: only an element, attribute, processing instruction or namespace node has an expanded name;
+                // upstream falls back to the node's name (`#text`, `#document`, `#comment`) for the others.
+                if (state.strict) {
+                    const type = node.nodeType;
+                    if (type === PROCESSING_INSTRUCTION_NODE) return node.target || node.nodeName || '';
+                    if (type !== ELEMENT_NODE && type !== ATTRIBUTE_NODE && type !== NAMESPACE_NODE) return '';
+                }
+                return node.localName || node.target || node.nodeName || '';
             };
         case 'namespace-uri':
             return (focus, state) => targetNode(name, args, focus, state)?.namespaceURI || '';
@@ -352,25 +397,31 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
             return (focus, state) => {
                 const [text = '', prefix = ''] = stringArgs('startsWith', '(string, string)', 2, args, focus, state);
                 state.charge(prefix.length >> 4);
-                return text.startsWith(prefix);
+                // Strict: the prefix must also end on a character boundary. Only the start of the text is compared, as startsWith does.
+                return text.startsWith(prefix) && (!state.strict || !splitsPair(text, prefix.length));
             };
         case 'contains':
             return (focus, state) => {
                 const [text = '', part = ''] = stringArgs(name, '(string, string)', 2, args, focus, state);
                 state.charge(text.length >> 4);
-                return text.includes(part);
+                return state.strict ? indexOfCharacters(text, part) !== -1 : text.includes(part);
             };
         case 'substring-before':
             return (focus, state) => {
                 const [text = '', part = ''] = stringArgs(name, '(string, string)', 2, args, focus, state);
                 state.charge(text.length >> 4);
+                // Strict: a match is of characters, so it cannot start or end inside a surrogate pair.
+                if (state.strict) {
+                    const at = indexOfCharacters(text, part);
+                    return at === -1 ? '' : text.substring(0, at);
+                }
                 return text.substring(0, text.indexOf(part));
             };
         case 'substring-after':
             return (focus, state) => {
                 const [text = '', part = ''] = stringArgs(name, '(string, string)', 2, args, focus, state);
                 state.charge(text.length >> 4);
-                const at = text.indexOf(part);
+                const at = state.strict ? indexOfCharacters(text, part) : text.indexOf(part);
                 return at === -1 ? '' : text.substring(at + part.length);
             };
         case 'substring':
@@ -417,17 +468,43 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                     state
                 );
                 state.charge((text.length + from.length) >> 4);
+                // Strict: the characters of the Recommendation (code points); upstream mode: UTF-16 units, as upstream.
+                const unit = (source: string, i: number): string =>
+                    state.strict ? source.slice(i, i + characterAt(source, i)) : source.charAt(i);
                 const map = new Map<string, string>();
-                for (let i = 0; i < from.length; i++) {
-                    const ch = from.charAt(i);
-                    if (!map.has(ch)) map.set(ch, to.charAt(i));
+                // The characters of `to` are taken one for each character of `from`; the rest of `to` is never looked at.
+                let target = 0;
+                for (let i = 0; i < from.length; i += state.strict ? characterAt(from, i) : 1) {
+                    const replacement = target < to.length ? unit(to, target) : '';
+                    target += target < to.length ? (state.strict ? characterAt(to, target) : 1) : 0;
+                    const ch = unit(from, i);
+                    if (!map.has(ch)) map.set(ch, replacement);
                 }
-                let out = '';
-                for (let i = 0; i < text.length; i++) {
-                    const ch = text.charAt(i);
-                    out += map.get(ch) ?? ch;
+                // The result is written as code units into a small buffer that is turned into a string every few thousand
+                // units, and the strings are joined once: a string grown by appending keeps a rope per character alive.
+                const chunks: string[] = [];
+                const buffer = new Uint16Array(TRANSLATE_CHUNK + 2);
+                let used = 0;
+                let changed = false;
+                const flush = (): void => {
+                    chunks.push(String.fromCharCode(...buffer.subarray(0, used)));
+                    used = 0;
+                };
+                for (let i = 0; i < text.length;) {
+                    const width = state.strict ? characterAt(text, i) : 1;
+                    const replacement = map.get(width === 1 ? text.charAt(i) : text.slice(i, i + width));
+                    if (replacement === undefined) {
+                        for (let k = 0; k < width; k++) buffer[used++] = text.charCodeAt(i + k);
+                    } else {
+                        changed = true;
+                        for (let k = 0; k < replacement.length; k++) buffer[used++] = replacement.charCodeAt(k);
+                    }
+                    if (used >= TRANSLATE_CHUNK) flush();
+                    i += width;
                 }
-                return out;
+                if (!changed) return text;
+                flush();
+                return chunks.join('');
             };
         case 'boolean':
             return (focus, state) => {

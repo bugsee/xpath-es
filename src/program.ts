@@ -73,7 +73,17 @@ export interface RawEvaluateOptions {
     readonly variables?: VariableLookup | undefined;
     readonly functions?: FunctionLookup | undefined;
     /** True when `namespaces` / `variables` are functions that may run arbitrary code (default true if given). */
-    readonly callbacks?: { readonly namespaces?: boolean; readonly variables?: boolean } | undefined;
+    readonly callbacks?:
+        | {
+              readonly namespaces?: boolean;
+              readonly variables?: boolean;
+              /**
+               * The names a table of functions defines, when the table is plain data: only a call of one of those can run
+               * caller code, so an expression that calls none of them stays pure. Absent: the table is a lookup function.
+               */
+              readonly functionNames?: ReadonlySet<string>;
+          }
+        | undefined;
     readonly caseInsensitive?: boolean | undefined;
     readonly allowAnyNamespaceForNoPrefix?: boolean | undefined;
     /**
@@ -131,6 +141,18 @@ export const DEFAULT_TIMEOUT_MS: number = 1_000;
  * some differences are in how the expression parses.
  */
 export type XPathMode = 'upstream' | 'strict';
+
+/**
+ * The mode a caller asked for, checked at run time (the types do not bind a JavaScript caller): absent means strict; a
+ * string that is neither `strict` nor `upstream` ('Strict', a typo) is refused, never read as the other mode.
+ */
+export function parseMode(value: unknown): XPathMode {
+    if (value === undefined || value === 'strict') return 'strict';
+    if (value === 'upstream') return 'upstream';
+    throw new XPathContextError(
+        `Unknown mode ${typeof value === 'string' ? JSON.stringify(value) : typeof value}: use 'strict' or 'upstream'`
+    );
+}
 
 export interface ProgramOptions {
     readonly limits?: ParseLimits | undefined;
@@ -195,7 +217,7 @@ export class XPathProgram {
 
     constructor(source: string, options: ProgramOptions = {}) {
         this.source = source;
-        this.mode = options.mode ?? 'strict';
+        this.mode = parseMode(options.mode);
         this.ast = parseXPath(source, options.limits ?? DEFAULT_PARSE_LIMITS, this.mode === 'strict');
         this.facts = expressionFacts(this.ast);
         this.#run = compile(this.ast);
@@ -226,11 +248,20 @@ export class XPathProgram {
             );
         }
         const { facts } = this;
+        // Strict mode resolves every prefix once before it walks anything (below), so no resolver code runs during the
+        // evaluation; upstream mode asks the resolver at each name test, which is code that may run at any point.
         const namespaceCallback =
-            options.namespaces !== undefined && (options.callbacks?.namespaces ?? true) && facts.usesPrefixes;
+            this.mode !== 'strict' &&
+            options.namespaces !== undefined &&
+            (options.callbacks?.namespaces ?? true) &&
+            facts.usesPrefixes;
         const variableCallback =
             options.variables !== undefined && (options.callbacks?.variables ?? true) && facts.usesVariables;
-        const functionCallback = options.functions !== undefined && facts.usesFunctions;
+        const definedNames = options.callbacks?.functionNames;
+        const functionCallback =
+            options.functions !== undefined &&
+            facts.usesFunctions &&
+            (definedNames === undefined || [...facts.functionNames].some((name) => definedNames.has(name)));
         const budget: unknown = options.budget === undefined ? DEFAULT_BUDGET : options.budget;
         const timeoutMs: unknown = options.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : options.timeoutMs;
         // A string such as '0' compares as a number, and NaN compares false with everything: either would silently

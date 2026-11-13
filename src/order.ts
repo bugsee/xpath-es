@@ -12,13 +12,21 @@ import { ATTRIBUTE_NODE, isNamespaceNode, treeRoot, XML_NAMESPACE_URI } from './
 import type { DomNode } from './dom.ts';
 import { XPathOrderError } from './errors.ts';
 
+/** Nodes between two charges while a tree is numbered. */
+export const NUMBERING_BATCH = 4096;
+
 export class Numbering {
     readonly #root: DomNode;
     readonly #index = new Map<DomNode, number>();
     readonly #byIndex: DomNode[] = [];
     readonly #attributeKeys = new Map<DomNode, number>();
 
-    constructor(anyNode: DomNode) {
+    /**
+     * `charge` is told the size of each batch of nodes as the walk goes (every BATCH nodes), so that a walk that never
+     * ends (a cyclic DOM) is stopped by the limits of the evaluation while it runs; the remainder is the caller's
+     * (`size % BATCH`, see EvalState.numbered).
+     */
+    constructor(anyNode: DomNode, charge?: (units: number) => void) {
         const root = treeRoot(anyNode);
         this.#root = root;
         const index = this.#index;
@@ -28,6 +36,7 @@ export class Numbering {
         while (node != null) {
             index.set(node, byIndex.length);
             byIndex.push(node);
+            if (charge !== undefined && byIndex.length % NUMBERING_BATCH === 0) charge(NUMBERING_BATCH);
             let next: DomNode | null | undefined = node.firstChild;
             while (next == null && node != null && node !== root) {
                 next = node.nextSibling;
@@ -88,6 +97,8 @@ export class Numbering {
             if (base === undefined) return undefined;
             const count = node.ownerElement.attributes?.length ?? 0;
             // `xml` first, then the bindings declared on the element in attribute order, then inherited ones.
+            // Strict mode's nodes carry their place among the element's namespace nodes: distinct, and increasing with it.
+            if (node.ordinal >= 0) return base + 0.25 * (1 - 1 / (node.ordinal + 2));
             const slot =
                 node.nodeValue === XML_NAMESPACE_URI ? 0 : node.localIndex >= 0 ? node.localIndex + 1 : count + 1;
             return base + (0.25 * (slot + 1)) / (count + 3);
@@ -113,7 +124,7 @@ export class Numbering {
      * The input must be free of duplicates. O(n log n) on numeric keys, or O(N + n) by a sweep when n is a large
      * share of the tree (N tree nodes).
      */
-    sort(nodes: readonly DomNode[]): DomNode[] | null {
+    sort(nodes: readonly DomNode[], strict = false): DomNode[] | null {
         const n = nodes.length;
         const keys = new Float64Array(n);
         let integral = true;
@@ -182,7 +193,8 @@ export class Numbering {
                 if (node !== undefined) out.push(node);
             }
         }
-        if (namespaces) assertNamespaceOrderDefined(out);
+        // Upstream mode mirrors upstream's failure to order two inherited bindings; strict mode orders them (section 5).
+        if (namespaces && !strict) assertNamespaceOrderDefined(out);
         return out;
     }
 
