@@ -7,8 +7,9 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [1.0.0-rc.0] - 2026-11-13
 
-The first release, a release candidate: it is published under the npm dist-tag `next` (`npm install xpath-es@next`), and it
-is also the first run of the release workflow and of npm trusted publishing.
+The first release, a release candidate: it is published under the npm dist-tag `next` (`npm install xpath-es@next`). It is
+published by hand from the release workflow's tarball (without a provenance statement), which creates the package on npm so
+that trusted publishing can be set up; later releases go through the workflow, with provenance (see `RELEASING.md`).
 
 ### Added
 
