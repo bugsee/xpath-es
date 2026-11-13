@@ -1,6 +1,6 @@
 {
     "name": "xpath-es",
-    "version": "1.0.0-rc.0",
+    "version": "1.0.0-rc.1",
     "description": "An XPath 1.0 engine in TypeScript: strict by default (the Recommendation), an upstream-compatible mode for existing consumers, work and time limits for hostile documents, and a differential and hostile-document test gate against upstream xpath 0.0.36.",
     "type": "module",
     "license": "MIT",
