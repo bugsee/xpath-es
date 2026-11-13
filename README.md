@@ -1,13 +1,13 @@
 # xpath-es
 
-A modern, strictly typed XPath 1.0 engine for TypeScript and JavaScript, **work in progress**.
+A modern, strictly typed XPath 1.0 engine for TypeScript and JavaScript, **release candidate** (`1.0.0-rc.0`, published under the npm dist-tag `next`).
 
 The goal is an engine for libraries that evaluate XPath on untrusted XML, such as XML-signature and SAML stacks: the
 Recommendation's answers by default (`strict` mode, with the deviations listed below), the answers of the widely used
 [`xpath`](https://github.com/goto100/xpath) package on request (`upstream` mode), and bounded work on hostile input: every
 evaluation has a work budget and a time limit, and an input that would need more is refused with a typed error. Some
 expressions are inherently quadratic on some documents (see [Limits](#limits)); the engine refuses those rather than
-running them. Nothing here is published, and the API is not stable.
+running them. The API may still change before 1.0.0.
 
 ## Status
 
@@ -17,8 +17,8 @@ This repository holds four things:
    and an interpreter, node-sets as sorted arrays with a one-pass document-order numbering, lazy axes, a work budget and
    a wall-clock limit on every evaluation, typed errors (`XPathError` and its subclasses), and `compat.ts`, an entry
    with upstream `xpath`'s API (`select`, `select1`, `parse`, `evaluate`, `useNamespaces`, the value classes and the
-   `is*` guards). `src/index.ts` exports both. **It is not published and not yet adopted by anything**; the API is not
-   stable.
+   `is*` guards). `src/index.ts` exports both. **It is a release candidate and not yet adopted by anything**; the API may
+   change before 1.0.0.
 2. **A differential harness** (`test/`) that compares any candidate XPath engine with upstream `xpath` 0.0.36, the
    oracle: random documents, a grammar-based expression fuzzer, mutation scenarios, and a corpus of the expressions
    real XML-signature and SAML libraries evaluate.
@@ -278,7 +278,7 @@ be slow on.
 ## Build and compatibility
 
 `npm run build` compiles `src/` to plain JavaScript with the same compiler and the same strict options as the type
-check (every strict flag, no `any`). The package is not published; this is what it would ship.
+check (every strict flag, no `any`). This is what the package ships.
 
 ```
 dist/index.js     index.d.ts     ES modules (and one .js / .d.ts per source module, flat in dist/)
