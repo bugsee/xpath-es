@@ -1,7 +1,6 @@
 {
     "name": "xpath-es",
     "version": "0.0.0",
-    "private": true,
     "description": "An XPath 1.0 engine in TypeScript: strict by default (the Recommendation), an upstream-compatible mode for existing consumers, work and time limits for hostile documents, and a differential and hostile-document test gate against upstream xpath 0.0.36.",
     "type": "module",
     "license": "MIT",
@@ -36,6 +35,10 @@
     },
     "homepage": "https://github.com/bugsee/xpath-es#readme",
     "sideEffects": false,
+    "publishConfig": {
+        "access": "public",
+        "provenance": true
+    },
     "engines": {
         "node": ">=20"
     },
@@ -95,7 +98,9 @@
         "test": "npm run test:unit && npm run test:harness && npm run test:modes && npm run test:differential && npm run test:hostile",
         "bench:hostile": "node bench/hostile.ts",
         "bench:consumers": "node bench/consumers.ts",
-        "bench:e2e": "node bench/e2e.ts"
+        "bench:e2e": "node bench/e2e.ts",
+        "release:check": "node scripts/release-check.ts",
+        "prepublishOnly": "node scripts/release-check.ts --prepublish"
     },
     "devDependencies": {
         "@authenio/xml-encryption": "2.0.2",
@@ -119,5 +124,14 @@
     },
     "overrides": {
         "xpath": "$xpath"
-    }
+    },
+    "keywords": [
+        "xpath",
+        "xpath1",
+        "xml",
+        "dom",
+        "saml",
+        "xmldom",
+        "typescript"
+    ]
 }
