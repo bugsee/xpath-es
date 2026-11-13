@@ -32,7 +32,7 @@ export interface Case {
      * candidate run in strict mode (CANDIDATE_MODE=strict); it is recorded in baselines/strict-digests.json.
      */
     readonly strictReference?: (doc: DomNode) => unknown;
-    /** Added with the engine's limits: not run for a candidate that has none (the bugsee/xpath fork). */
+    /** Added with the engine's limits: not run for a candidate that has none (upstream xpath). */
     readonly engineOnly?: boolean;
 }
 
@@ -172,7 +172,7 @@ export const CASES: readonly Case[] = [
             )
     },
     // ---- Added with the engine's limits and its resolver and id() paths (review findings). The oracle answers or the
-    // reference does; the fork is not judged on them (engineOnly). ----
+    // reference does; a candidate without limits is not judged on them (engineOnly). ----
     {
         name: 'resolver: 20k <a:x><a:y/><a:y/></a:x>, string(a:y) predicate',
         expression: '//a:x[string(a:y)="q"]',

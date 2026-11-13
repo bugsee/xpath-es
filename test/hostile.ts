@@ -1,5 +1,5 @@
 // The hostile-document gate: pass/fail. Every case of bench/hostile-cases.ts runs on the candidate (CANDIDATE, default
-// the bugsee/xpath fork) in its own process, killed when it takes too long, and must
+// this engine) in its own process, killed when it takes too long, and must
 //   - finish within the bound, and
 //   - give the same result as the oracle (upstream xpath), where baselines/oracle-digests.json knows it.
 //
@@ -14,7 +14,7 @@
 // with HOSTILE_STRICT=1, a candidate is judged strictly.
 //
 // Cases marked `engineOnly` (the engine's limits, its resolver and id() paths) run only with HOSTILE_ENGINE_CASES=1: a
-// candidate without those limits (the bugsee/xpath fork) is judged on the original cases. A case marked `expect: 'refuse'`
+// candidate without those limits (upstream xpath, CANDIDATE=xpath) is judged on the original cases. A case marked `expect: 'refuse'`
 // passes when the candidate stops with a typed limit, budget or timeout error within the bound (the oracle's answer is
 // recorded, but nobody should be made to build it). Every case that runs must have an oracle digest: one without is a
 // failure of the gate, not a pass on time alone.
@@ -33,7 +33,7 @@ import { candidateMode, candidateSpec } from './harness.ts';
 
 const engineCases = process.env['HOSTILE_ENGINE_CASES'] === '1';
 // The engine stops an evaluation at 1,000 ms (its default time limit), so a case that takes more than twice that is a loop
-// the limits do not see; a candidate without limits (the bugsee/xpath fork) is judged on the loose bound.
+// the limits do not see; a candidate without limits (upstream xpath) is judged on the loose bound.
 const boundMs = Number(process.env['HOSTILE_BOUND_MS'] ?? (engineCases ? 2_000 : 10_000));
 const killAfterMs = boundMs + 5_000;
 const only = process.env['HOSTILE_ONLY'] === undefined ? null : new RegExp(process.env['HOSTILE_ONLY']);

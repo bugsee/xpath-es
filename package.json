@@ -77,10 +77,8 @@
         "fixtures": "node bench/saml-fixtures.ts",
         "test:self": "CANDIDATE=xpath node test/fuzz.ts xmldom08 150 7 all && CANDIDATE=xpath node test/mutation.ts",
         "test:differential": "CANDIDATE=./src/index.ts node test/fuzz.ts xmldom08 300 11 all && CANDIDATE=./src/index.ts node test/mutation.ts && CANDIDATE=./src/index.ts node test/fuzz-expr.ts xmldom08 40 60 5",
-        "test:differential:fork": "node test/fuzz.ts xmldom08 300 11 all && node test/mutation.ts",
-        "test:fuzz-expr:fork": "node test/fuzz-expr.ts xmldom08 40 60 5",
         "test:unit": "node --test test/unit/*.test.ts",
-        "test:hostile": "node test/hostile.ts",
+        "test:hostile": "npm run test:hostile:engine",
         "test:hostile:engine": "CANDIDATE=./src/index.ts HOSTILE_ENGINE_CASES=1 HOSTILE_STRICT=1 node test/hostile.ts",
         "test:oracle": "node test/strict-oracle.ts xmldom08 40 150 91 ns && node test/strict-oracle.ts xmldom09 30 150 92 ns",
         "test:modes": "node test/mode-agreement.ts 60 100 91 && node test/strict-axes-fuzz.ts 60 100 91 xmldom08 && node test/strict-axes-fuzz.ts 40 100 92 xmldom09",
@@ -118,8 +116,7 @@
         "typescript-7": "npm:typescript@7.0.2",
         "xml-crypto": "6.4.0",
         "xmldom09": "npm:@xmldom/xmldom@0.9.12",
-        "xpath": "0.0.36",
-        "xpath-fork": "https://github.com/bugsee/xpath/releases/download/v0.0.36-bugsee.3/xpath-0.0.36-bugsee.3.tgz"
+        "xpath": "0.0.36"
     },
     "overrides": {
         "xpath": "$xpath"

@@ -212,10 +212,6 @@ CommonJS, so a program that loads both has two copies of the classes and `instan
 Node >= 22.18 (the TypeScript sources run directly, by type stripping; `npm run build` makes the plain JavaScript in
 `dist/`, see [Build and compatibility](#build-and-compatibility)).
 
-The one dependency that is a release tarball (`xpath-fork`, a dev dependency) needs `allow-remote=root` under npm 12 (EALLOWREMOTE
-otherwise); the committed `.npmrc` sets it, and npm 10 and 11 ignore it. The integrity of the tarball is pinned in
-`package-lock.json`.
-
 ```sh
 npm ci
 npm run check            # tsc (TypeScript 7, every strict flag), oxlint (type-aware), oxfmt --check
@@ -223,8 +219,7 @@ npm run test:unit        # unit tests of the engine (node:test)
 npm run build            # dist/: ES modules and CommonJS with declarations, same compiler and strict options
 npm run test:harness     # the harness tests itself on candidates whose verdict is known
 npm run test:differential        # the engine against upstream xpath (documents, scenarios, random expressions)
-npm run test:differential:fork   # the bugsee/xpath fork against upstream (its expression fuzzer: test:fuzz-expr:fork)
-npm run test:hostile
+npm run test:hostile             # the hostile documents, judged strictly (every case within its bound, or refused with a typed error)
 npm run test:oracle        # strict mode against the independent reference evaluator (test/strict-oracle.ts)
 npm run fixtures         # builds the signed SAML responses the benchmarks use (results/, not committed)
 npm run bench:hostile    # numbers, per engine
@@ -237,8 +232,8 @@ npm run bench:e2e        # samlify + xml-crypto, with the candidate swapped in f
 `CANDIDATE` names the engine under test: a package name resolved from `node_modules`, or a path (starting with `.`
 or absolute) to a CommonJS or ES module that exports the legacy `xpath` API (`select`, `select1`,
 `selectWithResolver`, `parse(...)`, `evaluate`, `XNodeSet`). `CANDIDATE=./src/index.ts` judges this engine, and
-`CANDIDATE=./test/support/candidate-slow.ts` the same engine with its fast paths switched off. The default is
-`xpath-fork`, the [bugsee/xpath](https://github.com/bugsee/xpath) release tarball, which is a dev dependency.
+`CANDIDATE=./test/support/candidate-slow.ts` the same engine with its fast paths switched off. The default is this
+engine (`./src/index.ts`); `CANDIDATE=xpath` judges upstream xpath itself.
 
 ```sh
 CANDIDATE=./path/to/engine.js node test/fuzz.ts xmldom08 300 1 all
@@ -272,8 +267,7 @@ cases, which are then judged on time only).
 A candidate with known-slow shapes lists them by case name in `baselines/<candidate>.json` (or the file `BASELINE`
 names). A listed case that is too slow does not fail the run and is reported; one that is within the bound is reported
 so the baseline can shrink when that is stable. A wrong result or an error is never baselined. With no baseline file, or
-`HOSTILE_STRICT=1`, a candidate is judged strictly. `baselines/xpath-fork.json` records what the fork is known to
-be slow on.
+`HOSTILE_STRICT=1`, a candidate is judged strictly, which is how this engine is judged (it has no baseline file).
 
 ## Build and compatibility
 
@@ -328,8 +322,6 @@ with contributions from **Yaron Naveh**, **goto100**, **Thomas Weinert**, **Jimm
 - W3C, *XML Path Language (XPath) Version 1.0*, W3C Recommendation, 16 November 1999:
   <https://www.w3.org/TR/1999/REC-xpath-19991116/>
 - `xpath` 0.0.36, the oracle (dev dependency): <https://github.com/goto100/xpath>, MIT.
-- The [bugsee/xpath](https://github.com/bugsee/xpath) fork, judged by this harness (dev dependency): MIT, same
-  copyright holders.
 
 Other dev dependencies keep their own licences: `@xmldom/xmldom`/`xmldom` (MIT), `jsdom` (MIT), `happy-dom` (MIT),
 `linkedom` (ISC), `samlify` (MIT), `xml-crypto` (MIT), `@authenio/xml-encryption` (MIT), `node-forge` (BSD-3-Clause
