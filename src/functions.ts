@@ -127,13 +127,15 @@ const SURROGATE = /[\ud800-\udfff]/;
 function indexOfCharacters(text: string, part: string, from = 0): number {
     let at = text.indexOf(part, from);
     if (!SURROGATE.test(part)) return at;
-    const half = (position: number): boolean => {
-        const next = text.charCodeAt(position);
-        const before = text.charCodeAt(position - 1);
-        return position > 0 && next >= 0xdc00 && next <= 0xdfff && before >= 0xd800 && before <= 0xdbff;
-    };
-    while (at !== -1 && (half(at) || half(at + part.length))) at = text.indexOf(part, at + 1);
+    while (at !== -1 && (splitsPair(text, at) || splitsPair(text, at + part.length))) at = text.indexOf(part, at + 1);
     return at;
+}
+
+/** True when the position falls between the two halves of a surrogate pair (inside one character). */
+function splitsPair(text: string, position: number): boolean {
+    const next = text.charCodeAt(position);
+    const before = text.charCodeAt(position - 1);
+    return position > 0 && next >= 0xdc00 && next <= 0xdfff && before >= 0xd800 && before <= 0xdbff;
 }
 
 /** The characters (code points) of the text, as slices: the unit strict mode counts in. */
@@ -395,7 +397,8 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
             return (focus, state) => {
                 const [text = '', prefix = ''] = stringArgs('startsWith', '(string, string)', 2, args, focus, state);
                 state.charge(prefix.length >> 4);
-                return state.strict ? indexOfCharacters(text, prefix) === 0 : text.startsWith(prefix);
+                // Strict: the prefix must also end on a character boundary. Only the start of the text is compared, as startsWith does.
+                return text.startsWith(prefix) && (!state.strict || !splitsPair(text, prefix.length));
             };
         case 'contains':
             return (focus, state) => {
@@ -469,11 +472,13 @@ export function compileCoreFunction(name: string, args: readonly Compiled[]): Co
                 const unit = (source: string, i: number): string =>
                     state.strict ? source.slice(i, i + characterAt(source, i)) : source.charAt(i);
                 const map = new Map<string, string>();
-                const targets: string[] = [];
-                for (let i = 0; i < to.length; i += state.strict ? characterAt(to, i) : 1) targets.push(unit(to, i));
-                for (let i = 0, at = 0; i < from.length; i += state.strict ? characterAt(from, i) : 1, at++) {
+                // The characters of `to` are taken one for each character of `from`; the rest of `to` is never looked at.
+                let target = 0;
+                for (let i = 0; i < from.length; i += state.strict ? characterAt(from, i) : 1) {
+                    const replacement = target < to.length ? unit(to, target) : '';
+                    target += target < to.length ? (state.strict ? characterAt(to, target) : 1) : 0;
                     const ch = unit(from, i);
-                    if (!map.has(ch)) map.set(ch, targets[at] ?? '');
+                    if (!map.has(ch)) map.set(ch, replacement);
                 }
                 // The result is written as code units into a small buffer that is turned into a string every few thousand
                 // units, and the strings are joined once: a string grown by appending keeps a rope per character alive.

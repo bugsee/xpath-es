@@ -514,7 +514,7 @@ function toEngineOptions(options: XPathEvaluateOptions | undefined): RawEvaluate
     // A table of functions that is plain data names what it defines; a lookup function can define anything.
     const functionNames =
         functions !== null && !functions.callback && isRecord(options.functions)
-            ? new Set(Object.keys(options.functions))
+            ? new Set(Object.getOwnPropertyNames(options.functions))
             : null;
     const namespaceLookup: NamespaceLookup | undefined =
         namespaces === null
