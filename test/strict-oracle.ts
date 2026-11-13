@@ -471,6 +471,9 @@ console.log(
 );
 for (const sample of shown) console.log(`  ${sample}`);
 // A limit is a policy, not an answer: more than a few refusals means the gate is not looking at much.
-const refusedTooOften = refused > Math.max(2, total / 100);
-if (refusedTooOften) console.log(`more than 1% of the evaluations were refused by a limit (${refused} of ${total})`);
+// `refused` counts evaluations (each expression is evaluated on three paths), so the denominator is evaluations too.
+const evaluations = total * 3;
+const refusedTooOften = refused > Math.max(2, evaluations / 100);
+if (refusedTooOften)
+    console.log(`more than 1% of the evaluations were refused by a limit (${refused} of ${evaluations})`);
 process.exitCode = total === 0 || mismatches > 0 || refusedTooOften ? 1 : 0;

@@ -8,7 +8,7 @@ import {
     CDATA_SECTION_NODE,
     TEXT_NODE
 } from './dom.ts';
-import { NamespaceNode, treeRoot, XML_NAMESPACE_URI } from './dom.ts';
+import { NamespaceNode, treeRoot, XML_NAMESPACE_URI, xpathParent } from './dom.ts';
 import type { DomNode, NamespaceLookup } from './dom.ts';
 
 export type { NamespaceLookup };
@@ -111,6 +111,9 @@ export const MAX_STRING_LENGTH: number = 1 << 24;
 
 /** Work units between two looks at the clock: rare enough to be free, frequent enough to stop within milliseconds. */
 const CLOCK_CHECK_INTERVAL = 4096;
+/** Nodes whose root one pure evaluation remembers (a longer chain is still walked and charged, just not kept). */
+const MAX_REMEMBERED_ROOTS = 1_000_000;
+
 /** Calls of charge() between two looks at the clock, however little each charged. */
 const CLOCK_CHECK_CALLS = 512;
 
@@ -139,6 +142,8 @@ export class EvalState {
     readonly #idIndexes = new Map<DomNode, ReadonlyMap<string, DomNode>>();
     /** getElementById answers per document and id (upstream mode's id()), dropped when caller code runs. */
     readonly #domLookups = new Map<DomNode, Map<string, DomNode | null>>();
+    /** node -> root of its tree, for the nodes a root walk has passed. Only filled when `pure` (no caller code can change the tree). */
+    readonly #roots = new Map<DomNode, DomNode>();
     /** Answers of document-only subexpressions (compile.ts `remembered`), per site and per document. */
     readonly #answers = new Map<object, Map<DomNode, XValue>>();
     /** The language of a node as lang() sees it (null: none), memoised so that a deep document stays linear. */
@@ -196,11 +201,44 @@ export class EvalState {
      * from the document (the numbering, the sibling ranks) may be stale and is dropped. Nothing is dropped while no such
      * code runs, which is what keeps an evaluation with a namespace resolver linear.
      */
+    /**
+     * The root of the tree that holds the node (section 2), walked up through parent links. The walk is charged as it goes
+     * (a cyclic parent chain is stopped by the limits). While the evaluation is pure the nodes passed are remembered, so
+     * the roots of the nodes of a deep chain cost one walk between them, not one walk each.
+     */
+    treeRootOf(node: DomNode): DomNode {
+        const passed: DomNode[] = [];
+        let current = node;
+        let root: DomNode | undefined;
+        let steps = 0;
+        let charged = 0;
+        for (;;) {
+            root = this.pure ? this.#roots.get(current) : undefined;
+            if (root !== undefined) break;
+            const parent = xpathParent(current);
+            if (parent === null) {
+                root = current;
+                break;
+            }
+            if (this.pure && passed.length < MAX_REMEMBERED_ROOTS) passed.push(current);
+            current = parent;
+            steps++;
+            if (steps - charged >= 1024) {
+                this.charge(steps - charged);
+                charged = steps;
+            }
+        }
+        this.charge(steps - charged + 1);
+        for (const one of passed) this.#roots.set(one, root);
+        return root;
+    }
+
     userCodeRan(): void {
         this.#numbering = null;
         this.siteCaches.clear();
         this.#idIndexes.clear();
         this.#domLookups.clear();
+        this.#roots.clear();
         this.#namespaceNodeObjects.clear();
         this.#answers.clear();
         this.languages.clear();
@@ -408,13 +446,19 @@ export function stringValueOf(node: DomNode, state?: EvalState): string {
         // siblings, and the node that stands for it is the first (see continuesATextRun in steps.ts).
         let run = node.nodeValue ?? '';
         let count = 1;
+        let charged = 0;
         for (let next = node.nextSibling; next != null; next = next.nextSibling) {
             if (next.nodeType !== TEXT_NODE && next.nodeType !== CDATA_SECTION_NODE) break;
             run += next.nodeValue ?? '';
             count++;
             if (run.length > MAX_STRING_LENGTH) throw new XPathLimitError('a text node is too long');
+            // Charged as the walk goes: a cycle of empty text nodes never makes the string long.
+            if (count - charged >= 1024) {
+                state.charge(count - charged);
+                charged = count;
+            }
         }
-        state.charge(count + (run.length >> 4));
+        state.charge(count - charged + (run.length >> 4));
         return run;
     }
     if (type !== ELEMENT_NODE && type !== DOCUMENT_NODE && type !== DOCUMENT_FRAGMENT_NODE) return node.nodeValue ?? '';

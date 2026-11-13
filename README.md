@@ -161,7 +161,9 @@ therefore rejected by a consumer in `upstream` mode (two matches) and accepted i
 element). `test/unit/strict-conformance.test.ts` pins both behaviours.
 
 Cost: strict `following::` and `preceding::` are linear over a node-set of contexts when there is no positional predicate and
-when `[k]` or `[last()]` is the first predicate; other positional predicates are not. Without a positional predicate they
+when `[k]` or `[last()]` is the first predicate; other positional predicates are not. The bound holds for an evaluation
+in which no variable or function callback is in use (`variables` or `functions` supplied and used by the expression, whatever
+the value): with one, each context node is evaluated on its own and the work budget can refuse the expression. Without a positional predicate they
 are one pass over the tree (`preceding::` of a set is everything before the last context that is not an ancestor of it).
 With `[k]` or `[last()]` as the first predicate they are one pass over the tree, then a lookup per context node by
 document-order number (a binary search; the ancestors of each context are kept on a stack while the contexts are taken
