@@ -95,7 +95,10 @@ void test('S-3: an attribute or a namespace node has no siblings, even in a DOM 
 });
 
 void test('S-3: attribute contexts have no siblings on every DOM of the matrix, with and without a prefix test', () => {
+    // jsdom 31 and happy-dom 21 need Node 22 (their undici does not load on Node 20, which the built suite also runs on).
+    const nodeMajor = Number(process.versions.node.split('.')[0]);
     for (const name of DOM_NAMES) {
+        if (nodeMajor < 22 && (name === 'jsdom' || name === 'happy')) continue;
         const doc = loadDom(name)('<r x="1" y="2"><a x="3"/><b/><c y="4"/></r>');
         for (const mode of ['strict', 'upstream'] as const) {
             for (const expression of [
