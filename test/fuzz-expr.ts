@@ -34,6 +34,7 @@ const perDocument = Number(process.argv[4] ?? 100);
 const random = makeRandom(Number(process.argv[5] ?? 4242));
 const nextExpression = makeExpressionGenerator(random, { namespaceAxis: process.argv[6] === 'ns' });
 const limit = Number(process.argv[7] ?? 5000);
+const STARTUP_LIMIT_MS = 60_000;
 
 const tally: Record<Kind, number> = { equal: 0, message: 0, order: 0, mixed: 0, result: 0, documented: 0 };
 const shapes = { 'node-set': 0, scalar: 0, error: 0 };
@@ -72,7 +73,13 @@ function runBatch(job: Job): Promise<number> {
         const worker = new Worker(new URL(`./fuzz-expr-worker${path.extname(import.meta.filename)}`, import.meta.url));
         let current = 0;
         let candidateDone = false;
-        let timer = setTimeout(expire, limit);
+        // Starting the worker (loading the engine and a DOM) has its own watchdog: it is not an evaluation, so it is
+        // neither a candidate timeout nor an expression consumed. A worker that never becomes ready fails the run.
+        let timer = setTimeout(() => {
+            void worker
+                .terminate()
+                .then(() => reject(new Error(`the worker was not ready within ${STARTUP_LIMIT_MS} ms`)));
+        }, STARTUP_LIMIT_MS);
         function expire(): void {
             if (candidateDone) slow.upstream++;
             else slow.candidate++;

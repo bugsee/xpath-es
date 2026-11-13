@@ -99,8 +99,8 @@ const MUTANTS: readonly Mutant[] = [
     {
         name: 'strict following skips the first following sibling',
         file: 'src/steps.ts',
-        find: 'visits += walkSubtrees(place.nextSibling, step, state, out);',
-        replace: 'visits += walkSubtrees(place.nextSibling?.nextSibling, step, state, out);'
+        find: 'walkSubtrees(place.nextSibling, step, state, out, visits);',
+        replace: 'walkSubtrees(place.nextSibling?.nextSibling, step, state, out, visits);'
     },
     {
         name: 'hoisting treats position() as document-only',
@@ -111,8 +111,8 @@ const MUTANTS: readonly Mutant[] = [
     {
         name: 'strict substring starts at position 0',
         file: 'src/functions.ts',
-        find: 'const low = Math.max(first, 1);',
-        replace: 'const low = Math.max(first, 0);'
+        find: 'const low = Math.max(first, 1) - 1;',
+        replace: 'const low = Math.max(first, 0) - 1;'
     },
     {
         name: 'the id index keeps the last element of a duplicated id',
