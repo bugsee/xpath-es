@@ -12,8 +12,8 @@ const require = createRequire(import.meta.url);
 
 /** The oracle: upstream xpath, a devDependency pinned to an exact version. */
 export const ORACLE_PACKAGE = 'xpath';
-/** The candidate when CANDIDATE is not set: the bugsee/xpath fork, also a devDependency. */
-export const DEFAULT_CANDIDATE = 'xpath-fork';
+/** The candidate when CANDIDATE is not set: this engine. */
+export const DEFAULT_CANDIDATE = './src/index.ts';
 
 type Constructor = new (...args: unknown[]) => unknown;
 

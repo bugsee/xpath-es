@@ -1,5 +1,5 @@
-// Differential fuzzer: upstream xpath 0.0.36 (the oracle) against the candidate (CANDIDATE, default the bugsee/xpath
-// fork). Random documents, then the scenarios static, mutated, detached, fragment, two documents and pair ordering
+// Differential fuzzer: upstream xpath 0.0.36 (the oracle) against the candidate (CANDIDATE, default this
+// engine). Random documents, then the scenarios static, mutated, detached, fragment, two documents and pair ordering
 // through XNodeSet, with the fuzz queries or the whole corpus (the consumers' expressions and the quirk probes).
 // Every difference is classified: `result` (different members), `mixed` (different members among attribute or
 // namespace nodes), `order` (same members, different order) and `message` (both throw, different text). All but
@@ -39,7 +39,7 @@ const documents = Number(process.argv[3] ?? 200);
 const random = makeRandom(Number(process.argv[4] ?? 12345));
 const queries = process.argv[5] === 'all' ? CORPUS : FUZZ_QUERIES;
 const parse = loadDom(domName);
-/** The engine's limits off, for the class-6 check (upstream and the fork ignore the options). */
+/** The engine's limits off, for the class-6 check (upstream xpath ignores the options). */
 const UNLIMITED = { budget: 0, timeoutMs: 0 };
 const upstream = loadOracle();
 const interned = loadInternedOracle();

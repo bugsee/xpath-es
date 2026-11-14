@@ -5,6 +5,13 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- The harness no longer depends on the `bugsee/xpath` fork, which has been deleted: the default candidate is this engine,
+  the self-test's fast and deliberately slow candidates are built on it, and upstream `xpath` 0.0.36 stays the oracle. The
+  fork's CI and nightly jobs, its hostile baseline and the `.npmrc` that allowed its tarball are gone.
+- The CI `built` matrix and the nightly hostile and e2e job now include Node 26.
+
 ## [1.0.0-rc.1] - 2026-11-13
 
 The first release made by the release workflow, through npm trusted publishing, with a provenance statement. There is no

@@ -1,11 +1,11 @@
-// A deliberately slow candidate, for the harness self-test (test/harness-selftest.ts): the bugsee/xpath fork's
-// answers (correct, and fast on the hostile cases) after a quadratic amount of pointless work in the number of nodes
+// A deliberately slow candidate, for the harness self-test (test/harness-selftest.ts): this engine's answers
+// (correct, and fast on the hostile cases) after a quadratic amount of pointless work in the number of nodes
 // of the document. The hostile gate must fail it for being slow, not for being wrong.
 
 import { call, loadModule, member } from '../harness.ts';
 import { isDomNode } from '../support/dom.ts';
 
-const engine = loadModule('xpath-fork');
+const engine = loadModule('./src/index.ts');
 
 function countNodes(from: unknown): number {
     if (!isDomNode(from)) return 0;

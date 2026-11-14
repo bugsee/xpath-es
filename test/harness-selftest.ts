@@ -29,7 +29,8 @@ function run(file: string, args: readonly string[], env: Readonly<Record<string,
 
 const REORDERING = './test/fixtures/reordering-candidate.ts';
 const QUADRATIC = './test/fixtures/quadratic-candidate.ts';
-// The first three hostile cases: fast on the fork, so any slowness in the quadratic candidate is its own.
+const ENGINE = './src/index.ts';
+// The first three hostile cases: fast on the engine, so any slowness in the quadratic candidate is its own.
 const FAST_CASES = { HOSTILE_ONLY: '^(0|1|2)$', HOSTILE_BOUND_MS: '1000' };
 
 let failed = 0;
@@ -193,7 +194,7 @@ try {
         reorderingMutations.output
     );
 
-    const goodGate = run('hostile.ts', [], { ...FAST_CASES, CANDIDATE: 'xpath-fork', HOSTILE_STRICT: '1' }, 120_000);
+    const goodGate = run('hostile.ts', [], { ...FAST_CASES, CANDIDATE: ENGINE, HOSTILE_STRICT: '1' }, 120_000);
     check(
         'hostile gate: a fast, correct candidate passes (strict)',
         goodGate.status === 0 && /0 failed/.test(goodGate.output),
@@ -223,12 +224,7 @@ try {
         baselined.status === 0 && /known slow \(baseline\)/.test(baselined.output),
         baselined.output
     );
-    const shrinkable = run(
-        'hostile.ts',
-        [],
-        { ...FAST_CASES, CANDIDATE: 'xpath-fork', BASELINE: baselineFile },
-        120_000
-    );
+    const shrinkable = run('hostile.ts', [], { ...FAST_CASES, CANDIDATE: ENGINE, BASELINE: baselineFile }, 120_000);
     check(
         'hostile gate: a baselined case that is within the bound is reported',
         shrinkable.status === 0 && /baselined but within the bound/.test(shrinkable.output),

@@ -3,7 +3,7 @@
 // hanging the run. The pass/fail gate is test/hostile.ts; this prints numbers.
 //
 //   node bench/hostile.ts [case#]
-//   ENGINES=upstream,fork,candidate HOSTILE_KILL_MS=120000 node bench/hostile.ts
+//   ENGINES=upstream,candidate HOSTILE_KILL_MS=120000 node bench/hostile.ts
 
 import { spawnSync } from 'node:child_process';
 import { KiB, CASES } from './hostile-cases.ts';
