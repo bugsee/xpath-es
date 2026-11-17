@@ -130,6 +130,23 @@ export function loadXPath(lib: unknown): XPathLike {
 export const loadOracle = (): XPathLike => loadXPath(loadOracleModule());
 export const loadCandidate = (): XPathLike => loadXPath(loadCandidateModule());
 
+/**
+ * Runs `run` with the candidate's fast paths on, even when CANDIDATE is the slow-path module (which sets the engine's
+ * static `forceSlowPath`). Used to answer "what would the candidate say with its limits off": the cap on namespace
+ * nodes is not lifted by an option, and the slow path reaches it where the fast path does not. A candidate without
+ * that switch (a published package, the plain engine) is run as it is.
+ */
+export function withFastPaths<T>(run: () => T): T {
+    const program = member(loadCandidateModule(), 'XPathProgram');
+    if (!isRecord(program) || program['forceSlowPath'] !== true) return run();
+    Reflect.set(program, 'forceSlowPath', false);
+    try {
+        return run();
+    } finally {
+        Reflect.set(program, 'forceSlowPath', true);
+    }
+}
+
 export type DomName = 'xmldom08' | 'xmldom09' | 'jsdom' | 'happy' | 'linkedom';
 export const DOM_NAMES: readonly DomName[] = ['xmldom08', 'xmldom09', 'jsdom', 'happy', 'linkedom'];
 

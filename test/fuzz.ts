@@ -24,7 +24,8 @@ import {
     loadCandidate,
     loadDom,
     loadOracle,
-    makeRandom
+    makeRandom,
+    withFastPaths
 } from './harness.ts';
 import { allowedClasses, classifyDifference, DOCUMENTED } from './support/classify.ts';
 import type { Scenario } from './support/classify.ts';
@@ -142,7 +143,7 @@ function compareQueries(
                 actual,
                 (text) => special(text) || node.nodeType === 2,
                 () => attempt(() => interned.select(query, node), index),
-                () => attempt(() => candidate.select(query, node, false, UNLIMITED), index)
+                () => withFastPaths(() => attempt(() => candidate.select(query, node, false, UNLIMITED), index))
             );
         }
     }

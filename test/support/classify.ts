@@ -33,11 +33,13 @@ export const DOCUMENTED = [
     'two-trees: engine throws XPathOrderError, upstream answers or crashes in the DOM',
     'two-trees: upstream throws, engine answers',
     'namespace-axis: upstream repeats a namespace node for a duplicate context',
-    "limit: the engine stopped at its default budget; with the limits off its answer equals upstream's"
+    "limit: the engine stopped at a limit; with the limits off its answer equals upstream's (or upstream's with the duplicate namespace nodes interned)"
 ] as const;
 export const NAMESPACE_DUPLICATE: string = DOCUMENTED[4];
 export const LIMIT_POLICY: string = DOCUMENTED[5];
-export const LIMIT_ERROR: RegExp = /exceeded its (work budget|time limit)/;
+/** The engine's policy refusals: the work budget, the time limit and the cap on namespace nodes made by one evaluation. */
+export const LIMIT_ERROR: RegExp =
+    /exceeded its (work budget|time limit)|The namespace axis would make more than \d+ nodes/;
 
 /** xmldom 0.9's `compareDocumentPosition` dereferences the parent of a node that has none. */
 export const DOM_COMPARE_CRASH = "ERR Cannot read properties of null (reading 'childNodes')";
@@ -51,13 +53,28 @@ export function allowedClasses(classify: string): ReadonlySet<string> {
 }
 
 /**
- * Class 6: upstream answered and the engine stopped at its default work budget or time limit (a policy, not a result),
- * and the same evaluation with the limits off (`unlimited()`) gives upstream's answer exactly. A budget that the
- * engine's answer does not survive being lifted from is not this class.
+ * Class 6: the engine stopped at one of its limits (a policy, not a result) and the same evaluation with the limits
+ * off (`unlimited()`) gives upstream's answer exactly (an answer, or the same error: the engine can run out of budget
+ * before it reaches the step where upstream fails), or, for an expression with the
+ * namespace axis, the answer of upstream with its namespace nodes interned (the class 5 difference, which a refused
+ * evaluation can hide). An answer that does not survive the limits being lifted is not this class, and neither is an
+ * evaluation that still fails with them lifted.
+ *
+ * `unlimited()` must run an engine that is not itself refused by the limit: the cap on namespace nodes cannot be
+ * lifted by an option, so the harness evaluates with the engine's fast paths on (`withFastPaths`; the nightly gates them
+ * separately).
  */
-export function isLimitPolicy(expected: string, actual: string, unlimited: () => string): boolean {
-    if (expected.startsWith('ERR') || !actual.startsWith('ERR') || !LIMIT_ERROR.test(actual)) return false;
-    return unlimited() === expected;
+export function isLimitPolicy(
+    expression: string,
+    expected: string,
+    actual: string,
+    unlimited: () => string,
+    interned?: () => string
+): boolean {
+    if (!actual.startsWith('ERR') || !LIMIT_ERROR.test(actual)) return false;
+    const lifted = unlimited();
+    if (lifted === expected) return true;
+    return interned !== undefined && isNamespaceDuplicate(expression, expected, lifted, interned);
 }
 
 /** The documented class of a difference, or null when it falls in none (or in one that `allowed` does not list). */
@@ -70,7 +87,11 @@ export function classifyDifference(
     allowed: ReadonlySet<string>,
     unlimited?: () => string
 ): string | null {
-    if (unlimited !== undefined && allowed.has(LIMIT_POLICY) && isLimitPolicy(expected, actual, unlimited))
+    if (
+        unlimited !== undefined &&
+        allowed.has(LIMIT_POLICY) &&
+        isLimitPolicy(expression, expected, actual, unlimited, interned)
+    )
         return LIMIT_POLICY;
     const found = documentedClass(scenario, expression, expected, actual, interned);
     return found !== null && allowed.has(found) ? found : null;

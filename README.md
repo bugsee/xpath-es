@@ -65,10 +65,13 @@ Other deliberate differences from upstream, in either mode:
 - Error *messages* differ where upstream throws an accidental `TypeError` or `ReferenceError`; the engine throws typed
   errors, and the fuzzers compare the *category* of two errors (syntax, unresolvable name, type, no document order,
   limit), not the text.
-- **Class 6, the limits.** The engine stops an evaluation at its default work budget or time limit (below); upstream
-  would have gone on. When that is the only difference, the fuzzers re-run the engine with the limits off and require
-  upstream's answer exactly (`test/support/classify.ts`, `isLimitPolicy`). The expressions this happens to are
-  quadratic or worse on a document with a parent of thousands of children.
+- **Class 6, the limits.** The engine stops an evaluation at its default work budget, its time limit or its cap on
+  namespace nodes (below); upstream would have gone on. When that is the only difference, the fuzzers re-run the engine
+  with the limits off and its fast paths on (the namespace cap is not lifted by an option, and the slow path reaches it
+  where the fast path does not) and require upstream's answer exactly: an answer, the same error (the engine can run
+  out of budget before the step at which upstream fails), or, for the namespace axis, upstream's answer with the
+  duplicate namespace nodes interned (class 5) (`test/support/classify.ts`, `isLimitPolicy`). The expressions this
+  happens to are quadratic or worse on a document with a parent of thousands of children.
 - Plain-object resolver maps (`namespaces`, `functions`, `variables`) are read by own property only: a prefix called
   `constructor`, or a function called `toString`, is not a member of `Object.prototype`.
 - In upstream mode a namespace resolver (a function) is asked at every name test, as upstream asks it, but it must not
