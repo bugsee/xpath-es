@@ -10,6 +10,7 @@ import {
     classifyDifference,
     DOCUMENTED,
     DOM_COMPARE_CRASH,
+    isLimitPolicy,
     isNamespaceDuplicate,
     ORDER_ERROR
 } from '../support/classify.ts';
@@ -135,5 +136,103 @@ void test('only an expression with the namespace axis can be classified', () => 
     assert.equal(
         isNamespaceDuplicate('//a/namespace::*', 'ERR boom', '[1]', () => '[1]'),
         false
+    );
+});
+
+const BUDGET = 'ERR XPath evaluation exceeded its work budget of 5000000 node visits';
+const NS_CAP = 'ERR The namespace axis would make more than 262144 nodes';
+
+void test('a refusal at a limit is policy when lifting the limit gives the answer upstream gave', () => {
+    for (const refusal of [BUDGET, NS_CAP, 'ERR XPath evaluation exceeded its time limit of 1000 ms'])
+        assert.equal(
+            isLimitPolicy('//a', 'string:true', refusal, () => 'string:true'),
+            true,
+            refusal
+        );
+});
+
+void test('a refusal at a limit is policy for a namespace expression when the lifted answer is the interned one', () => {
+    // Upstream repeats a namespace node for a duplicate context; the engine, lifted, does not: class 5 behind a refusal.
+    const expression = '//a/namespace::*';
+    assert.equal(
+        isLimitPolicy(
+            expression,
+            '[1,1,2]',
+            NS_CAP,
+            () => '[1,2]',
+            () => '[1,2]'
+        ),
+        true
+    );
+    // Not for an expression without the namespace axis, nor when the interned answer is not the lifted one.
+    assert.equal(
+        isLimitPolicy(
+            '//a',
+            '[1,1,2]',
+            NS_CAP,
+            () => '[1,2]',
+            () => '[1,2]'
+        ),
+        false
+    );
+    assert.equal(
+        isLimitPolicy(
+            expression,
+            '[1,1,2]',
+            NS_CAP,
+            () => '[1,2]',
+            () => '[2]'
+        ),
+        false
+    );
+});
+
+void test('a refusal at a limit is not policy when the lifted evaluation still differs, fails, or the refusal is another error', () => {
+    assert.equal(
+        isLimitPolicy('//a', 'string:true', BUDGET, () => 'string:false'),
+        false
+    );
+    assert.equal(
+        isLimitPolicy('//a', 'string:true', BUDGET, () => BUDGET),
+        false
+    );
+    assert.equal(
+        isLimitPolicy('//a', 'string:true', 'ERR Cannot resolve QName foo', () => 'string:true'),
+        false
+    );
+    // The engine answering is not a refusal by policy.
+    assert.equal(
+        isLimitPolicy('//a', 'string:true', 'string:false', () => 'string:true'),
+        false
+    );
+});
+
+void test('a refusal at a limit is policy when upstream fails and the lifted evaluation fails the same way', () => {
+    // The engine ran out of budget before the step at which upstream fails.
+    assert.equal(
+        isLimitPolicy('//a/u:b', 'ERR Cannot resolve QName u', BUDGET, () => 'ERR Cannot resolve QName u'),
+        true
+    );
+    assert.equal(
+        isLimitPolicy('//a/u:b', 'ERR Cannot resolve QName u', BUDGET, () => 'string:true'),
+        false
+    );
+    assert.equal(
+        isLimitPolicy('//a/u:b', 'ERR Cannot resolve QName u', BUDGET, () => 'ERR something else'),
+        false
+    );
+});
+
+void test('classifyDifference names the limit class, and only where the class is allowed', () => {
+    const expression = '//a/namespace::*';
+    const lifted = () => '[1,2]';
+    const interned = () => '[1,2]';
+    assert.equal(
+        classifyDifference('static', expression, '[1,1,2]', NS_CAP, interned, allowedClasses('ns-duplicate'), lifted),
+        DOCUMENTED[5]
+    );
+    assert.equal(
+        classifyDifference('static', expression, '[1,1,2]', NS_CAP, interned, new Set<string>(), lifted),
+        null
     );
 });

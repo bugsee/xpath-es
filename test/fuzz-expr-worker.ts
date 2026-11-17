@@ -3,7 +3,16 @@
 // exponential in the number of steps for some random paths).
 
 import { parentPort } from 'node:worker_threads';
-import { allNodes, describe, errorText, isDomName, loadCandidate, loadDom, loadOracle } from './harness.ts';
+import {
+    allNodes,
+    describe,
+    errorText,
+    isDomName,
+    loadCandidate,
+    loadDom,
+    loadOracle,
+    withFastPaths
+} from './harness.ts';
 import type { XPathLike } from './harness.ts';
 import { allowedClasses, classifyDifference } from './support/classify.ts';
 import type { DomNode } from './support/dom.ts';
@@ -190,7 +199,10 @@ function run(job: Job, send: (report: Report) => void): void {
                     got,
                     () => attempt(() => interned.select(expression, node)),
                     allowed,
-                    () => attempt(() => evaluate(candidate, expression, node, { budget: 0, timeoutMs: 0 }))
+                    () =>
+                        withFastPaths(() =>
+                            attempt(() => evaluate(candidate, expression, node, { budget: 0, timeoutMs: 0 }))
+                        )
                 );
                 if (documented !== null) kind = 'documented';
             }
